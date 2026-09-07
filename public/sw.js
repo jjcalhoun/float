@@ -1,8 +1,8 @@
-/* JRock_Wise service worker.
+/* Float service worker.
    Network-first so a new Vercel deploy is picked up automatically whenever
    you're online (the app stays current with no manual update), with a cache
    fallback so the shell still opens offline. Bump CACHE to force a refresh. */
-const CACHE = "jrock-wise-v1";
+const CACHE = "float-v2";
 const SHELL = ["/", "/manifest.json", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {

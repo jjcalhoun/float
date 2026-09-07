@@ -1,49 +1,21 @@
-/* The JRock_Wise mark — a rock cracked open with a $ inside, on brand green.
-   Same art as the app icon, as inline SVG so it stays crisp at any size.
-   Callers control size + corner rounding (wrap with overflow-hidden). */
+/* The Float mark — a sailboat on marine blue, white sail, teal waterline.
+ *
+ * This is the same drawing as public/brand/float-mark.svg, which is what
+ * scripts/make-icons.mjs rasterises into the PWA icons and the favicon.
+ * Inline here so it stays crisp at any size and picks up no network request;
+ * if you change one, change the other and re-run the script.
+ *
+ * Callers control size + corner rounding (wrap with overflow-hidden). */
 export function AppLogo({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-      <defs>
-        <radialGradient id="jrw-glow" cx="0.5" cy="0.5" r="0.5">
-          <stop offset="0" stopColor="#FDE68A" />
-          <stop offset="0.55" stopColor="#EAB308" />
-          <stop offset="1" stopColor="#B45309" />
-        </radialGradient>
-      </defs>
-      <rect width="512" height="512" fill="#16A34A" />
-      {/* Scale the whole geode up around the canvas center so it reaches nearly
-          to the edges, leaving only a thin green margin. */}
-      <g transform="translate(256 256) scale(1.38) translate(-256 -256)">
-        <ellipse cx="256" cy="262" rx="64" ry="120" fill="url(#jrw-glow)" />
-        <path
-          d="M212 110 L146 148 L100 232 L108 330 L172 398 L232 404 L206 344 L236 292 L204 238 L238 178 L212 110 Z"
-          fill="#454E5C"
-          stroke="#242B35"
-          strokeWidth="8"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M262 104 L346 130 L410 212 L404 322 L336 400 L282 406 L308 346 L278 292 L312 238 L276 176 L262 104 Z"
-          fill="#4E5866"
-          stroke="#242B35"
-          strokeWidth="8"
-          strokeLinejoin="round"
-        />
-        <path d="M212 110 L146 148 L164 190 L212 168 Z" fill="#5C6678" />
-        <path d="M262 104 L346 130 L330 176 L276 160 Z" fill="#5A6474" />
-        <text
-          x="257"
-          y="318"
-          fontFamily="system-ui, Arial, sans-serif"
-          fontWeight="700"
-          fontSize="160"
-          fill="#fff"
-          textAnchor="middle"
-        >
-          $
-        </text>
-      </g>
+      <rect width="512" height="512" fill="#0B3D5C" />
+      {/* mainsail and jib, split by the gap that reads as the mast */}
+      <path d="M272 92 L272 300 L394 300 Z" fill="#FFFFFF" />
+      <path d="M242 128 L242 300 L146 300 Z" fill="#FFFFFF" />
+      <path d="M112 318 L404 318 L344 396 Q256 410 172 396 Z" fill="#FFFFFF" />
+      <path d="M96 424 H416" stroke="#14B8A6" strokeWidth="26" strokeLinecap="round" fill="none" />
+      <path d="M148 470 H364" stroke="#14B8A6" strokeWidth="26" strokeLinecap="round" fill="none" />
     </svg>
   );
 }
