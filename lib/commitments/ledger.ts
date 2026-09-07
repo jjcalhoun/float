@@ -98,6 +98,18 @@ export interface LedgerOptions {
   countCardPurchases?: boolean;
 }
 
+/** Identifies a transfer by the PAIR it belongs to rather than by the row.
+ *
+ *  A transfer is two rows — money leaving one account and arriving at another
+ *  — and only one of them carries the link to the plan. Both describe one
+ *  payment, so both have to resolve to the same key. */
+const transferKey = (t: Transaction): string => {
+  const a = t.account_id;
+  const b = t.transfer_account_id ?? "";
+  const [x, y] = a < b ? [a, b] : [b, a];
+  return `${x}|${y}|${Math.abs(t.amount).toFixed(2)}|${t.date}`;
+};
+
 /** Signed actual from linked transactions. A two-sided transfer may have either
  *  or both legs linked; prefer the outflow legs so a pair isn't double-counted. */
 function linkedActual(kind: CommitmentKind, linked: Transaction[]): number | null {
@@ -127,6 +139,25 @@ export function ledger(
     const arr = linkedByCommitment.get(id);
     if (arr) arr.push(t);
     else linkedByCommitment.set(id, [t]);
+  }
+
+  /* A transfer pair that settles a commitment must count ONCE.
+   *
+   * The paying leg carries the link and is counted as the commitment's actual.
+   * The arriving leg is unlinked, and the second pass below counts unlinked
+   * money landing in a loan, card or savings account as cash committed — so a
+   * mortgage payment was charged to the month twice, once as its plan line and
+   * again as its own arrival. On real data that understated free-to-spend by
+   * $883.57 across a mortgage and a HELOC, silently, in the one number this
+   * whole screen exists to get right.
+   *
+   * Both legs share a key, so the arriving leg can recognise that its own
+   * payment has already been counted. */
+  const settledTransfers = new Set<string>();
+  for (const t of transactions) {
+    if (t.type !== "transfer") continue;
+    if (!t.commitment_id || !ids.has(t.commitment_id)) continue;
+    settledTransfers.add(transferKey(t));
   }
 
   let expectedIncome = 0;
@@ -183,6 +214,9 @@ export function ledger(
       // Count the destination leg only, so a pair counts once. This includes a
       // card payment in both views: paying down a carried balance is real cash
       // leaving, whatever was bought this month.
+      // ...unless the plan already counted it: this is the other half of a
+      // payment linked to a commitment, not a second payment.
+      if (settledTransfers.has(transferKey(t))) continue;
       if (
         t.amount > 0 &&
         (ctx.loanAccountIds.has(t.account_id) ||

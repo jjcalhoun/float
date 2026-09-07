@@ -216,3 +216,24 @@ describe("totals", () => {
     expect(ids(rows)).toEqual(["big", "small"]);
   });
 });
+
+describe("a transfer pair the plan already counted", () => {
+  it("shows ONE leg, not both — one payment, one hole", () => {
+    /* A paid card payment really does have nowhere to show: the debt petal
+       counts loan accounts only, and "upcoming card payments" stops being
+       upcoming once it is paid. So the paying leg belongs here. Its arriving
+       twin does not — that is the same money, and counting both was how the
+       ledger came to charge a mortgage to the month twice. */
+    const rows = unaccountedItems(
+      [{ id: "cc1", period: "2026-09", skipped: false, covered_by: null }] as Commitment[],
+      [
+        t({ id: "out", account_id: "chk", type: "transfer", amount: -300, transfer_account_id: "card", commitment_id: "cc1", date: "2026-09-20" }),
+        t({ id: "in", account_id: "card", type: "transfer", amount: 300, transfer_account_id: "chk", date: "2026-09-20" }),
+      ],
+      "2026-09",
+      ctx,
+    );
+    expect(ids(rows)).toEqual(["out"]);
+    expect(rows[0].gap).toBe(300);
+  });
+});

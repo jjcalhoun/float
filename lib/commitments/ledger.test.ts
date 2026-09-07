@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ledger } from "./ledger";
+import { ledger, type LedgerContext } from "./ledger";
 import type { Commitment } from "./types";
 import type { Transaction } from "@/lib/types";
 
@@ -222,5 +222,81 @@ describe("commitments ledger", () => {
     const led = ledger(items, [], "2026-07", ctx);
     expect(led.commitmentsPlanned).toBe(824); // the month still expects all four
     expect(led.items.every((i) => i.status === "expected")).toBe(true);
+  });
+});
+
+/* A transfer pair settling one commitment, counted twice.
+ *
+ * Real data, September 2026:
+ *
+ *   Chase Checking      -583.57  commitment_id: <mortgage>
+ *   Citizens Mortgage   +583.57  commitment_id: null
+ *
+ * The first leg is the mortgage's actual. The second is unlinked money
+ * landing in a loan account, which the ledger counts as cash committed — so
+ * one payment was charged to the month twice. Across the mortgage and a
+ * HELOC that understated free-to-spend by $883.57, with nothing on any screen
+ * saying so. */
+describe("a transfer pair settling a commitment", () => {
+  const pairCtx: LedgerContext = {
+    creditAccountIds: new Set(["card"]),
+    loanAccountIds: new Set(["mortgage"]),
+    savingsAccountIds: new Set(["save"]),
+  };
+
+  const pair = (over: Partial<Transaction> = {}) => [
+    {
+      id: "out", user_id: "u", account_id: "chk", transfer_account_id: "mortgage",
+      date: "2026-09-02", amount: -583.57, type: "transfer", source: "sync",
+      reviewed: true, commitment_id: "m1", created_at: "", updated_at: "", ...over,
+    },
+    {
+      id: "in", user_id: "u", account_id: "mortgage", transfer_account_id: "chk",
+      date: "2026-09-02", amount: 583.57, type: "transfer", source: "sync",
+      reviewed: true, created_at: "", updated_at: "",
+    },
+  ] as Transaction[];
+
+  const mortgage = {
+    id: "m1", user_id: "u", series_id: "mortgage", period: "2026-09", seq: 0,
+    name: "Mortgage Payment", kind: "debt", amount: -583.57, interval: 1,
+    frequency: "monthly", series_ended: false, skipped: false, variable: false,
+    auto_confirm: false, covered_by: null, account_id: "chk",
+    created_at: "", updated_at: "",
+  } as Commitment;
+
+  it("charges the month once, not twice", () => {
+    const led = ledger([mortgage], pair(), "2026-09", pairCtx);
+    expect(led.commitmentsEffective).toBeCloseTo(583.57);
+    expect(led.discretionary).toBe(0);
+  });
+
+  it("still counts an unlinked loan payment nothing promised", () => {
+    // no commitment, so nothing else counts it — this must stay
+    const [, arriving] = pair();
+    const led = ledger([], [arriving], "2026-09", pairCtx);
+    expect(led.discretionary).toBeCloseTo(583.57);
+  });
+
+  it("counts a savings transfer that settles no plan line", () => {
+    const led = ledger(
+      [],
+      [
+        { id: "a", user_id: "u", account_id: "chk", transfer_account_id: "save", date: "2026-09-01", amount: -100, type: "transfer", source: "sync", reviewed: true, created_at: "", updated_at: "" },
+        { id: "b", user_id: "u", account_id: "save", transfer_account_id: "chk", date: "2026-09-01", amount: 100, type: "transfer", source: "sync", reviewed: true, created_at: "", updated_at: "" },
+      ] as Transaction[],
+      "2026-09",
+      pairCtx,
+    );
+    expect(led.discretionary).toBe(100);
+  });
+
+  it("leaves free-to-spend $583.57 higher than it was", () => {
+    const income = {
+      ...mortgage, id: "i1", series_id: "pay", name: "ADP", kind: "income", amount: 4000,
+    } as Commitment;
+    const led = ledger([income, mortgage], pair(), "2026-09", pairCtx);
+    // 4000 planned income, one 583.57 payment: 3416.43, not 2832.86
+    expect(led.freeToSpend).toBeCloseTo(3416.43);
   });
 });

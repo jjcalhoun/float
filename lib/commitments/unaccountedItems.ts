@@ -44,12 +44,21 @@ const splitTotal = (t: Transaction) =>
 const nameOf = (t: Transaction) =>
   t.merchant || t.description || "Transaction";
 
+/** Same pair key as ledger.ts — both legs of one transfer resolve to it. */
+const transferKey = (t: Transaction): string => {
+  const a = t.account_id;
+  const b = t.transfer_account_id ?? "";
+  const [x, y] = a < b ? [a, b] : [b, a];
+  return `${x}|${y}|${Math.abs(t.amount).toFixed(2)}|${t.date}`;
+};
+
 /** What the ledger counts this transaction as putting out this month.
  *  Mirrors ledger.ts — if that changes, this has to change with it. */
 function ledgerOutflow(
   t: Transaction,
   ctx: LedgerContext,
   spendView: boolean,
+  settledTransfers: Set<string>,
 ): number {
   if (t.type === "income") return 0;
 
@@ -58,6 +67,9 @@ function ledgerOutflow(
   if (t.commitment_id) return Math.max(0, -t.amount);
 
   if (t.type === "transfer") {
+    // The other half of a payment the plan already counted is not a second
+    // payment. Mirrors the same guard in ledger.ts.
+    if (settledTransfers.has(transferKey(t))) return 0;
     // Money landing in a loan, card or savings account is cash committed.
     // The destination leg only, so a pair counts once.
     if (
@@ -117,6 +129,12 @@ export function unaccountedItems(
 
   // Skipped and covered lines count zero in the ledger, so their payments
   // cannot leave a hole. Everything else in this period is fair game.
+  const settledTransfers = new Set<string>();
+  for (const t of transactions) {
+    if (t.type !== "transfer" || !t.commitment_id) continue;
+    settledTransfers.add(transferKey(t));
+  }
+
   const counted = new Set(
     commitments
       .filter((c) => c.period === period && !c.skipped && !c.covered_by)
@@ -130,7 +148,7 @@ export function unaccountedItems(
       if (!counted.has(t.commitment_id)) continue;
     } else if (monthKey(t.date) !== period) continue;
 
-    const ledger = ledgerOutflow(t, ctx, spendView);
+    const ledger = ledgerOutflow(t, ctx, spendView, settledTransfers);
     if (ledger <= 0) continue;
     const ring = ringAmount(t, ctx);
     const gap = ledger - ring;
