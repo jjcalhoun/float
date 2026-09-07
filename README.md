@@ -2,7 +2,7 @@
 
 A personal-finance PWA. Next.js + Supabase + React Query, deployed on Vercel.
 
-**Live demo: https://jrock-wise-demo.vercel.app/** — no sign-in, no database. A
+**Live demo: https://bedrock-float-demo.vercel.app/** — no sign-in, no database. A
 fictional user's finances generated in the browser, editable, reset daily.
 
 ## What it is for

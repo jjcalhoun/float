@@ -337,13 +337,17 @@ export function HomeScreen() {
 
       {/* Gauge hero — tap the center for the ledger breakdown */}
       <Card className="px-3 pt-3 pb-2">
-        <Gauge
-          petals={petals}
-          income={expectedIncome || roll.spend}
-          center={center}
-          onPetalClick={onPetalClick}
-          onCenterClick={isCurrent ? () => setSheet("ledger") : undefined}
-        />
+        {/* the donut is square, so it needs a cap — left to fill a wide
+            desktop column it would be taller than the viewport */}
+        <div className="mx-auto w-full max-w-[380px]">
+          <Gauge
+            petals={petals}
+            income={expectedIncome || roll.spend}
+            center={center}
+            onPetalClick={onPetalClick}
+            onCenterClick={isCurrent ? () => setSheet("ledger") : undefined}
+          />
+        </div>
         {isCurrent && hasCards && (
           <CardSpendToggle
             on={countCards}
