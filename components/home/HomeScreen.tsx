@@ -343,9 +343,13 @@ export function HomeScreen() {
           <Gauge
             petals={petals}
             income={expectedIncome || roll.spend}
+            // Only the current month has a free-to-spend to be consistent
+            // WITH; a past month's centre reads "Net" and makes no such claim.
+            free={isCurrent ? led.freeToSpend : undefined}
             center={center}
             onPetalClick={onPetalClick}
             onCenterClick={isCurrent ? () => setSheet("ledger") : undefined}
+            onUnaccountedClick={isCurrent ? () => setSheet("ledger") : undefined}
           />
         </div>
         {isCurrent && hasCards && (
