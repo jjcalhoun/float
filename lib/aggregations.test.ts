@@ -227,3 +227,59 @@ describe("accountBalance — strictly after as_of_date", () => {
     expect(accountBalance(account, txns)).toBe(900);
   });
 });
+
+/* A mortgage payment shown as one line under Housing.
+ *
+ * One payment was appearing in three places: the transfer under "Debt
+ * payments", the escrow counter-charge under Housing, and interest nowhere at
+ * all — $814 of chart for a $583.57 payment. The Debt tab wants that split;
+ * the home screen wants the payment. */
+describe("paymentCategoryByAccount", () => {
+  const loans = new Set(["mortgage"]);
+  const payTo = { paymentCategoryByAccount: { mortgage: "housing" } };
+
+  const payment = {
+    id: "p", user_id: "u", account_id: "mortgage", transfer_account_id: "chk",
+    date: "2026-09-02", amount: 583.57, type: "transfer", source: "sync",
+    reviewed: true, created_at: "", updated_at: "",
+  } as Transaction;
+
+  const escrow = {
+    id: "e", user_id: "u", account_id: "mortgage", date: "2026-09-01",
+    amount: -230.91, type: "expense", source: "escrow", reviewed: true,
+    created_at: "", updated_at: "",
+    splits: [{ id: "s", user_id: "u", transaction_id: "e", category_id: "housing", bucket: "needs", amount: -230.91, created_at: "" }],
+  } as unknown as Transaction;
+
+  it("puts the whole payment under the named category", () => {
+    const { byCat } = rollup([payment], "2026-09", undefined, new Set(), loans, payTo);
+    expect(byCat.housing).toBeCloseTo(583.57);
+  });
+
+  it("drops the escrow split, which is inside that payment", () => {
+    // both would show $814.48 for a $583.57 payment
+    const { byCat } = rollup([payment, escrow], "2026-09", undefined, new Set(), loans, payTo);
+    expect(byCat.housing).toBeCloseTo(583.57);
+  });
+
+  it("changes nothing about what the month cost", () => {
+    const withCat = rollup([payment, escrow], "2026-09", undefined, new Set(), loans, payTo);
+    const without = rollup([payment], "2026-09", undefined, new Set(), loans);
+    expect(withCat.spend).toBeCloseTo(without.spend);
+    expect(withCat.byBucket.needs).toBeCloseTo(without.byBucket.needs);
+  });
+
+  it("leaves an unnamed loan exactly as it was", () => {
+    const heloc = { ...payment, id: "h", account_id: "heloc", amount: 300 } as Transaction;
+    const { byCat, byBucket } = rollup(
+      [heloc], "2026-09", undefined, new Set(), new Set(["heloc"]), payTo,
+    );
+    expect(byCat.housing).toBeUndefined();
+    expect(byBucket.needs).toBe(300);
+  });
+
+  it("still keeps escrow under its own category when no payment category is set", () => {
+    const { byCat } = rollup([payment, escrow], "2026-09", undefined, new Set(), loans);
+    expect(byCat.housing).toBeCloseTo(230.91);
+  });
+});

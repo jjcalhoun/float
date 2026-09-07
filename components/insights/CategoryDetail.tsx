@@ -13,6 +13,11 @@ interface Props {
   transactions: Transaction[];
   month: string; // "YYYY-MM"
   monthlyTarget: number;
+  /* The home screen can show a loan's whole payment under a category; the
+     7-month history has to agree with the ring it was opened from. */
+  paymentCategoryByAccount?: Record<string, string>;
+  savingsAccountIds?: Set<string>;
+  loanAccountIds?: Set<string>;
   onClose: () => void;
 }
 
@@ -23,6 +28,9 @@ export function CategoryDetail({
   transactions,
   month,
   monthlyTarget,
+  paymentCategoryByAccount,
+  savingsAccountIds,
+  loanAccountIds,
   onClose,
 }: Props) {
   const setBudget = useSetCategoryBudget();
@@ -39,7 +47,9 @@ export function CategoryDetail({
     for (let i = 6; i >= 0; i--) {
       const d = new Date(y, m - 1 - i, 1);
       const mk = monthKey(d);
-      const { byCat } = rollup(transactions, mk);
+      const { byCat } = rollup(transactions, mk, undefined, savingsAccountIds, loanAccountIds, {
+        paymentCategoryByAccount,
+      });
       out.push({ key: mk, label: MONTH_ABBR[d.getMonth()], spend: byCat[category.id] ?? 0 });
     }
     return out;

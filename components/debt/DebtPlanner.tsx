@@ -270,6 +270,7 @@ function MinPaymentRow({
     monthly_payment?: number | null;
     escrow_amount?: number | null;
     escrow_category_id?: string | null;
+    payment_category_id?: string | null;
   }) => void;
 }) {
   const { data: categories = [] } = useCategories();
@@ -327,6 +328,32 @@ function MinPaymentRow({
           </button>
         )}
       </div>
+
+      {/* Home screen only: show this loan's whole payment under one category
+          instead of as a debt line. The split between principal, interest and
+          escrow is the point of THIS tab, and is unaffected. */}
+      {canEscrow && (
+        <label className="flex items-center gap-2 text-xs" style={{ color: "var(--color-faint)" }}>
+          <span className="shrink-0">home screen</span>
+          <select
+            value={account.payment_category_id ?? ""}
+            onChange={(e) => onSave({ payment_category_id: e.target.value || null })}
+            className="flex-1 min-w-0 rounded-lg px-2 py-1 text-xs outline-none border"
+            style={{
+              background: "var(--color-elevated)",
+              color: "var(--color-text)",
+              borderColor: "var(--color-hairline)",
+            }}
+          >
+            <option value="">Show under Debt payments</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                Show whole payment under {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       {hasEscrow && (
         <>
