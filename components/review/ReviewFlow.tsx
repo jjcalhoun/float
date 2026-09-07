@@ -18,6 +18,7 @@ import { reviewKind } from "@/lib/commitments/series";
 import { monthKey } from "@/lib/aggregations";
 import { mergeQueue, nextIndex } from "@/lib/reviewQueue";
 import { CategoryGrid } from "@/components/transactions/CategoryGrid";
+import { CommitmentPicker } from "@/components/commitments/CommitmentPicker";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { BUCKETS } from "@/lib/buckets";
@@ -387,74 +388,16 @@ export function ReviewFlow({ onClose }: { onClose: () => void }) {
               </p>
             )}
 
-            {/* Planned payment match. Plain chips: name, date, amount.
-                Claimed lines drop to a "Claimed" group — dimmed, but still
-                selectable, because the reason to tap one is that an earlier
-                match was wrong. */}
+            {/* Planned payment match — shared with the transaction editor */}
             {candidates.length > 0 && (
-              <div
-                className="rounded-[10px] p-3 space-y-2.5"
-                style={{
-                  background: "var(--color-surface)",
-                  border: commitmentIds.length > 0 ? "1px solid var(--color-primary)" : "1px solid transparent",
-                }}
-              >
-                <p className="text-sm" style={{ color: "var(--color-text)" }}>
-                  {suggested && commitmentIds.length === 1 && commitmentIds[0] === suggested.id ? (
-                    <>Looks like: <span className="font-semibold">{suggested.name}</span></>
-                  ) : (
-                    "Fulfills a planned payment?"
-                  )}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <Chip active={commitmentIds.length === 0} onClick={() => setCommitmentIds([])}>
-                    None
-                  </Chip>
-                  {candidates
-                    .filter((x) => !x.claimedBy)
-                    .map(({ commitment: i }) => (
-                      <Chip
-                        key={i.id}
-                        active={commitmentIds.includes(i.id)}
-                        onClick={() => toggle(i.id)}
-                      >
-                        {chipLabel(i)}
-                      </Chip>
-                    ))}
-                </div>
-                {commitmentIds.length > 1 && (
-                  <p className="text-xs" style={{ color: "var(--color-faint)" }}>
-                    Covers {commitmentIds.length} occurrences ·{" "}
-                    {fmt(
-                      windowItems
-                        .filter((i) => commitmentIds.includes(i.id))
-                        .reduce((s, i) => s + i.amount, 0),
-                    )}{" "}
-                    planned
-                  </p>
-                )}
-                {candidates.some((x) => x.claimedBy) && (
-                  <>
-                    <p className="text-xs font-semibold" style={{ color: "var(--color-faint)" }}>
-                      Claimed
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {candidates
-                        .filter((x) => x.claimedBy)
-                        .map(({ commitment: i }) => (
-                          <Chip
-                            key={i.id}
-                            active={commitmentIds.includes(i.id)}
-                            dim={!commitmentIds.includes(i.id)}
-                            onClick={() => toggle(i.id)}
-                          >
-                            {chipLabel(i)}
-                          </Chip>
-                        ))}
-                    </div>
-                  </>
-                )}
-              </div>
+              <CommitmentPicker
+                candidates={candidates}
+                selected={commitmentIds}
+                onToggle={toggle}
+                onClear={() => setCommitmentIds([])}
+                suggested={suggested}
+                date={txn?.date}
+              />
             )}
 
             {/* Make recurring — hidden when a rule already covers this merchant */}
@@ -525,11 +468,3 @@ export function ReviewFlow({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** Chip text: name, date, amount. Nothing about claim state — the dimming
- *  and the Claimed group already say that. */
-function chipLabel(i: { name: string; due_hint?: string | null; amount: number }): string {
-  const parts = [i.name];
-  if (i.due_hint) parts.push(shortDate(i.due_hint));
-  parts.push(fmt(i.amount));
-  return parts.join(" \u00b7 ");
-}

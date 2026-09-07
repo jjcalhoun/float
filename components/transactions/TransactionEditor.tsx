@@ -14,6 +14,7 @@ import {
   useResolveTransfer,
 } from "@/hooks/useSupabaseData";
 import { CategoryGrid } from "@/components/transactions/CategoryGrid";
+import { CommitmentPicker } from "@/components/commitments/CommitmentPicker";
 import { useUpsertSeries, useSeries } from "@/hooks/useSeries";
 import { reviewKind, seriesInputFrom } from "@/lib/commitments/series";
 import { useCommitmentWindow, useLinkCommitment } from "@/hooks/useCommitments";
@@ -25,7 +26,6 @@ import { monthKey } from "@/lib/aggregations";
 import { SeriesEditor } from "@/components/plan/SeriesEditor";
 import { isInterestPaid } from "@/lib/interestPaid";
 import { todayISO } from "@/lib/dates";
-import { fmt, shortDate } from "@/lib/format";
 import { BUCKETS } from "@/lib/buckets";
 import type { Transaction, TransactionType, BucketType, RecurringFrequency } from "@/lib/types";
 import type { Commitment } from "@/lib/commitments/types";
@@ -448,73 +448,20 @@ export function TransactionEditor({ txn, onClose, inline }: Props) {
           </div>
         )}
 
-        {/* Planned payment link — mirrors the review flow. Plain chips;
-            claimed lines drop to a dimmed "Claimed" group that stays
-            selectable so a bad match can be taken back. */}
+        {/* Planned payment link — shared with the review flow */}
         {(candidates.length > 0 || txn.commitment_id) && (
-          <div
-            className="rounded-[10px] p-3 space-y-2.5"
-            style={{
-              background: "var(--color-elevated)",
-              border: commitmentIds.length > 0 ? "1px solid var(--color-primary)" : "1px solid transparent",
+          <CommitmentPicker
+            candidates={candidates}
+            selected={commitmentIds}
+            onToggle={pickCommitment}
+            onClear={() => {
+              touchedPlan.current = true;
+              setCommitmentIds([]);
             }}
-          >
-            <p className="text-sm" style={{ color: "var(--color-text)" }}>
-              {suggested && commitmentIds.length === 1 && commitmentIds[0] === suggested.id
-                ? <>Looks like: <span className="font-semibold">{suggested.name}</span></>
-                : "Fulfills a planned payment?"}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <Chip
-                active={commitmentIds.length === 0}
-                onClick={() => {
-                  touchedPlan.current = true;
-                  setCommitmentIds([]);
-                }}
-              >
-                None
-              </Chip>
-              {candidates
-                .filter((x) => !x.claimedBy)
-                .map(({ commitment: i }) => (
-                  <Chip key={i.id} active={commitmentIds.includes(i.id)} onClick={() => pickCommitment(i.id)}>
-                    {chipLabel(i)}
-                  </Chip>
-                ))}
-            </div>
-            {commitmentIds.length > 1 && (
-              <p className="text-xs" style={{ color: "var(--color-faint)" }}>
-                Covers {commitmentIds.length} occurrences ·{" "}
-                {fmt(
-                  windowItems
-                    .filter((i) => commitmentIds.includes(i.id))
-                    .reduce((s, i) => s + i.amount, 0),
-                )}{" "}
-                planned
-              </p>
-            )}
-            {candidates.some((x) => x.claimedBy) && (
-              <>
-                <p className="text-xs font-semibold" style={{ color: "var(--color-faint)" }}>
-                  Claimed
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {candidates
-                    .filter((x) => x.claimedBy)
-                    .map(({ commitment: i }) => (
-                      <Chip
-                        key={i.id}
-                        active={commitmentIds.includes(i.id)}
-                        dim={!commitmentIds.includes(i.id)}
-                        onClick={() => pickCommitment(i.id)}
-                      >
-                        {chipLabel(i)}
-                      </Chip>
-                    ))}
-                </div>
-              </>
-            )}
-          </div>
+            suggested={suggested}
+            date={date}
+            background="var(--color-elevated)"
+          />
         )}
 
         {error && (
@@ -549,11 +496,3 @@ export function TransactionEditor({ txn, onClose, inline }: Props) {
   );
 }
 
-/** Chip text: name, date, amount. Claim state is conveyed by dimming and the
- *  Claimed group, not by words. */
-function chipLabel(i: { name: string; due_hint?: string | null; amount: number }): string {
-  const parts = [i.name];
-  if (i.due_hint) parts.push(shortDate(i.due_hint));
-  parts.push(fmt(i.amount));
-  return parts.join(" \u00b7 ");
-}
