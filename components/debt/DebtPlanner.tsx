@@ -329,10 +329,12 @@ function MinPaymentRow({
         )}
       </div>
 
-      {/* Home screen only: show this loan's whole payment under one category
-          instead of as a debt line. The split between principal, interest and
-          escrow is the point of THIS tab, and is unaffected. */}
-      {canEscrow && (
+      {/* Home screen only: show this account's payment under one category
+          instead of as a debt line. On a loan that means the WHOLE payment,
+          escrow and interest included, since they are inside it. On a card it
+          means the payment alone — the purchases keep their own categories.
+          The split shown on THIS tab is unaffected either way. */}
+      {(
         <label className="flex items-center gap-2 text-xs" style={{ color: "var(--color-faint)" }}>
           <span className="shrink-0">home screen</span>
           <select
@@ -345,7 +347,9 @@ function MinPaymentRow({
               borderColor: "var(--color-hairline)",
             }}
           >
-            <option value="">Show under Debt payments</option>
+            <option value="">
+              {canEscrow ? "Show under Debt payments" : "Leave uncategorised"}
+            </option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>
                 Show whole payment under {c.name}

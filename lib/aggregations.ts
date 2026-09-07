@@ -51,9 +51,15 @@ export function rollup(
    * principal, interest and escrow is the whole point; wrong on the home
    * screen, where $583.57 left the account once and belongs under Housing.
    *
-   * Naming a category for the account moves the WHOLE payment there and drops
-   * that account's own splits, because escrow and interest are inside the
-   * payment already — counting both would show $814 for a $583 payment. */
+   * Naming a category for a LOAN moves the whole payment there and drops that
+   * account's own splits, because escrow and interest are inside the payment
+   * already — counting both showed $814 for a $583 payment.
+   *
+   * A CARD is not the same shape and must not drop its splits. Escrow is part
+   * of a mortgage payment; last month's groceries are not part of a card
+   * payment. They are separate money — which is exactly why the card toggle
+   * counts both when a balance is carried — so the payment gets its category
+   * and the purchases keep theirs. */
   const payTo = opts.paymentCategoryByAccount ?? {};
   const byCat: Record<string, number> = {};
   const byBucket: Record<BucketType, number> = { needs: 0, wants: 0, savings: 0 };
@@ -76,6 +82,14 @@ export function rollup(
       if (savingsAccountIds.has(txn.account_id)) {
         byBucket.savings += txn.amount;
         spend += txn.amount;
+      } else if (payTo[txn.account_id] && txn.amount > 0 && !loanAccountIds.has(txn.account_id)) {
+        // A card payment named a category. Cards are otherwise skipped here —
+        // the purchases already counted — but that left a paid card payment
+        // with no slice at all while the ledger counted it as cash leaving.
+        const cat = payTo[txn.account_id];
+        byCat[cat] = (byCat[cat] ?? 0) + txn.amount;
+        byBucket.needs += txn.amount;
+        spend += txn.amount;
       } else if (loanAccountIds.has(txn.account_id)) {
         // Paying down a loan/HELOC is real money committed — the borrowing was
         // never expensed — so it reduces net available. Filed under needs (a
@@ -89,9 +103,10 @@ export function rollup(
       continue;
     }
 
-    // Escrow and interest on an account whose payment is shown whole are
-    // INSIDE that payment; counting their splits again would double-charge it.
-    if (payTo[txn.account_id]) continue;
+    // Escrow and interest on a LOAN whose payment is shown whole are INSIDE
+    // that payment; counting their splits again would double-charge it. A
+    // card's purchases are not inside its payment, so they stay.
+    if (loanAccountIds.has(txn.account_id) && payTo[txn.account_id]) continue;
 
     // expense + refund: aggregate via splits
     for (const split of txn.splits ?? []) {

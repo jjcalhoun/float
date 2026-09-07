@@ -237,3 +237,41 @@ describe("a transfer pair the plan already counted", () => {
     expect(rows[0].gap).toBe(300);
   });
 });
+
+describe("a payment shown under a category", () => {
+  const payTo = { paymentCategoryByAccount: { card: "debt" } };
+
+  it("no longer counts as unaccounted for", () => {
+    // the card payment was the last legitimate resident of the wedge; naming
+    // a category for it gives it a slice, so the hole closes
+    const rows = unaccountedItems(
+      C,
+      [t({ id: "cc", account_id: "card", type: "transfer", amount: 300 })],
+      "2026-09",
+      ctx,
+      payTo,
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("covers the paying leg too, not just the arriving one", () => {
+    const rows = unaccountedItems(
+      [{ id: "cc1", period: "2026-09", skipped: false, covered_by: null }] as Commitment[],
+      [t({ id: "out", account_id: "chk", type: "transfer", amount: -300, transfer_account_id: "card", commitment_id: "cc1" })],
+      "2026-09",
+      ctx,
+      payTo,
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("still reports it when no category is named", () => {
+    const rows = unaccountedItems(
+      C,
+      [t({ id: "cc", account_id: "card", type: "transfer", amount: 300 })],
+      "2026-09",
+      ctx,
+    );
+    expect(rows[0].gap).toBe(300);
+  });
+});
