@@ -51,6 +51,20 @@ export async function proxy(request: NextRequest) {
     if (!user && !pathname.startsWith("/login") && !pathname.startsWith("/auth")) {
       const loginUrl = request.nextUrl.clone();
       loginUrl.pathname = "/login";
+      // A sign-in code that landed on the wrong path goes to the callback, not
+      // to the login form. Supabase falls back to the Site URL when
+      // emailRedirectTo isn't in the allowed redirects, so the code arrives at
+      // "/" carrying a perfectly valid grant; cloning the URL kept the query
+      // and dropped the user on a login page that had no idea what to do with
+      // it. From the outside that is an endless loop with no error anywhere.
+      const code = loginUrl.searchParams.get("code");
+      if (code) {
+        loginUrl.pathname = "/auth/callback";
+        return NextResponse.redirect(loginUrl);
+      }
+      // Otherwise carry nothing over — a stale query on the login form can
+      // only confuse whatever reads it next.
+      loginUrl.search = "";
       return NextResponse.redirect(loginUrl);
     }
     if (user && pathname === "/login") {
