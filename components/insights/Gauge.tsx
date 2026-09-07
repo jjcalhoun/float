@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { fmt0 } from "@/lib/format";
-import { allocate, point, unaccounted, wedgePath, type Arc, type DonutGeometry } from "./donut";
+import { allocate, point, wedgePath, type Arc, type DonutGeometry } from "./donut";
 
 export interface GaugePetal {
   key: string;
@@ -20,10 +20,13 @@ interface Props {
   petals: GaugePetal[];
   income: number; // expected income — the circle's full scale
   /** The ledger's free-to-spend. When given, the neutral wedge IS this number
-   *  rather than a leftover, and whatever the wedges don't account for gets
-   *  its own wedge. Omit it and the ring falls back to deriving (fine for a
-   *  past month, where the centre reads "Net" and makes no such claim). */
+   *  rather than a leftover. Omit it and the ring falls back to deriving (fine
+   *  for a past month, where the centre reads "Net" and makes no such claim). */
   free?: number;
+  /** Money the ledger counted as gone that no wedge claims, ENUMERATED — see
+   *  lib/commitments/unaccountedItems.ts. Sized from the actual rows, never
+   *  from a subtraction, so the wedge and the sheet behind it cannot disagree. */
+  unaccounted?: number;
   center?: { label: string; value: string; sub?: string }; // readout override
   onPetalClick?: (key: string) => void;
   onCenterClick?: () => void; // e.g. open the ledger breakdown
@@ -83,6 +86,7 @@ export function Gauge({
   petals,
   income,
   free,
+  unaccounted: unaccountedValue,
   center,
   onPetalClick,
   onCenterClick,
@@ -100,11 +104,20 @@ export function Gauge({
   const totalActual = sized.filter((p) => !p.item.dim).reduce((s, p) => s + p.size, 0);
   const petalTotal = sized.reduce((s, p) => s + p.size, 0);
 
-  // Money the ledger counted as gone that no category claimed. Appending it as
-  // an ordinary wedge is what makes the neutral remainder come out equal to
-  // free-to-spend — the ring and the centre then read the same number because
-  // the circle adds up, not because anyone forced them to match.
-  const gap = free === undefined ? 0 : unaccounted(income, petalTotal, free);
+  /* Money the ledger counted as gone that no wedge claims.
+   *
+   * This was derived — income, less the wedges, less free-to-spend — and that
+   * was wrong twice over. It labelled the wedge "not in a category" without
+   * knowing whether anything was uncategorised, and it disagreed with the
+   * sheet behind it: $579 on the wedge against $0 of actual rows, because a
+   * subtraction absorbs every difference between the ledger and the ring, not
+   * just the ones this label describes.
+   *
+   * So it is the enumerated total now, and nothing else. When the wedges plus
+   * free don't fill the circle, the rest simply isn't drawn: an untinted arc
+   * says "unaccounted for" honestly, where a labelled wedge asserted a reason
+   * it had no evidence for. */
+  const gap = Math.max(0, unaccountedValue ?? 0);
   const ringItems =
     gap > 0
       ? [
@@ -124,7 +137,22 @@ export function Gauge({
         ]
       : sized;
 
-  const { wedges, remainder, remainderValue } = allocate(ringItems, income, {
+  /* The circle's scale.
+   *
+   * Not income, once free-to-spend is authoritative. The ring's wedges and the
+   * ledger's free-to-spend are computed from different sides of the same
+   * month, and on real data they do not always sum to income — there is a
+   * residue neither this component nor the sheet behind it can name. Scaling
+   * to income drew that residue as a wedge and gave it a label it had not
+   * earned.
+   *
+   * Scaling to what we can actually account for keeps every wedge real and the
+   * neutral one exactly equal to free-to-spend, at the cost of the ring being
+   * a proportional breakdown rather than a strict fraction of income. The
+   * centre still carries the authoritative "of $X expected". */
+  const scale = free === undefined ? income : petalTotal + gap + Math.max(0, free);
+
+  const { wedges, remainder, remainderValue } = allocate(ringItems, scale, {
     start: 90,
     gap: GAP,
     minSpan: MIN_SPAN,

@@ -444,6 +444,7 @@ export function HomeScreen() {
             // Only the current month has a free-to-spend to be consistent
             // WITH; a past month's centre reads "Net" and makes no such claim.
             free={isCurrent ? led.freeToSpend : undefined}
+            unaccounted={isCurrent ? unaccounted.reduce((s, r) => s + r.gap, 0) : undefined}
             center={center}
             onPetalClick={onPetalClick}
             onCenterClick={isCurrent ? () => setSheet("ledger") : undefined}
