@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { fmt0 } from "@/lib/format";
+import { allocate, point, wedgePath, type Arc, type DonutGeometry } from "./donut";
 
 export interface GaugePetal {
   key: string;
@@ -17,184 +18,181 @@ export interface GaugePetal {
 
 interface Props {
   petals: GaugePetal[];
-  income: number; // expected income — the arc's baseline scale
+  income: number; // expected income — the circle's full scale
   center?: { label: string; value: string; sub?: string }; // readout override
   onPetalClick?: (key: string) => void;
   onCenterClick?: () => void; // e.g. open the ledger breakdown
 }
 
-/* Budget arc. The whole half-circle represents expected income; each petal is
-   sized to scale by max(budget, actual), so the plan is visible from day one and
-   a petal grows past its budget when overspent. A solid inner arc fills toward
-   the budget as money is actually spent. Hover/tap a petal for actual-vs-budget
-   and the 3-month average. */
-const VB_W = 360;
-const VB_H = 232;
-const CX = VB_W / 2;
-const CY = 196;
-const RC = 156;
-const TH = 42;
+/* Budget donut. The whole circle is expected income; each wedge is a category,
+   and what's left over — the neutral wedge — is the month's float. Hover or tap
+   a wedge for actual-vs-budget and the 3-month average.
+   It was a half-circle until the categories outgrew it: 180° left every wedge
+   thin enough that most were colour-only, with no room for an icon. The full
+   turn is the same information with twice the arc to spend on it.
+   The geometry lives in ./donut.ts. */
+const VB = 360;
+const G: DonutGeometry = { cx: VB / 2, cy: VB / 2, rc: 140, th: 46, corner: 10 };
 const GAP = 3.5;
-const CORNER = 10;
-const MIN_ICON_DEG = 13; // below this a petal is color-only (no icon)
-const MIN_SPAN = 5; // smallest petal, in degrees — keeps it tappable + rounded
+const MIN_ICON_DEG = 13; // below this a wedge is colour-only (no icon)
+const MIN_SPAN = 5; // smallest wedge, in degrees — keeps it tappable + rounded
 
-const Ri = RC - TH / 2;
-const Ro = RC + TH / 2;
-const DEG = 180 / Math.PI;
+const Ri = G.rc - G.th / 2;
 const REMAIN_COLOR = "#9A938A";
-
-const pt = (r: number, deg: number): [number, number] => {
-  const a = (deg * Math.PI) / 180;
-  return [CX + r * Math.cos(a), CY - r * Math.sin(a)];
-};
-const f = (p: [number, number]) => `${p[0].toFixed(1)} ${p[1].toFixed(1)}`;
-
-/** Filled rounded-corner wedge between high/low angles, across [Ri, Ro]. */
-function wedgePath(aH: number, aL: number): string {
-  let rc = Math.min(CORNER, ((aH - aL) * Ro) / DEG / 2 - 1);
-  if (rc < 1) rc = 1;
-  const phiO = (rc / Ro) * DEG;
-  const phiI = (rc / Ri) * DEG;
-  const A = pt(Ro, aH - phiO);
-  const B = pt(Ro, aL + phiO);
-  const C = pt(Ro - rc, aL);
-  const D = pt(Ri + rc, aL);
-  const E = pt(Ri, aL + phiI);
-  const F = pt(Ri, aH - phiI);
-  const G = pt(Ri + rc, aH);
-  const Hh = pt(Ro - rc, aH);
-  return (
-    `M ${f(A)} A ${Ro} ${Ro} 0 0 1 ${f(B)} A ${rc} ${rc} 0 0 1 ${f(C)} ` +
-    `L ${f(D)} A ${rc} ${rc} 0 0 1 ${f(E)} A ${Ri} ${Ri} 0 0 0 ${f(F)} ` +
-    `A ${rc} ${rc} 0 0 1 ${f(G)} L ${f(Hh)} A ${rc} ${rc} 0 0 1 ${f(A)} Z`
-  );
-}
 
 const pct = (v: number, total: number) => `${(v / total) * 100}%`;
 
-/** Petals near the top of the arc (roughly 55°–125°) get their tooltip BELOW
- *  the petal, inside the arc — above-the-petal would clip past the viewport. */
-const tooltipFlips = (midDeg: number) => midDeg > 55 && midDeg < 125;
+/** Tooltips are placed just inside the ring, toward the centre, so they stay
+ *  in frame however far round the circle their wedge sits — outside the ring
+ *  there is no margin left in any direction. A wedge in the top half hangs its
+ *  tooltip downward from that point; one in the bottom half hangs it up. */
+const inTopHalf = (deg: number) => {
+  const a = ((deg % 360) + 360) % 360;
+  return a < 180;
+};
+
+function Tooltip({ mid, children }: { mid: number; children: React.ReactNode }) {
+  const down = inTopHalf(mid);
+  const [x, y] = point(G, Ri - 8, mid);
+  return (
+    <div
+      className={`absolute z-10 -translate-x-1/2 ${down ? "" : "-translate-y-full"} rounded-[10px] px-3 py-2 pointer-events-none shadow-lg`}
+      style={{
+        left: pct(x, VB),
+        top: pct(y, VB),
+        background: "var(--color-elevated)",
+        border: "1px solid var(--color-hairline)",
+        minWidth: 150,
+        maxWidth: 220,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
 
 export function Gauge({ petals, income, center, onPetalClick, onCenterClick }: Props) {
   const [active, setActive] = useState<string | null>(null);
 
-  // Petals are sized to scale by actual spend (or the committed amount for
-  // dimmed not-yet-paid segments, which sort after the solid ones); the arc's
-  // full length is expected income, so the neutral remainder is what's free.
+  // Wedges are sized by actual spend (or the committed amount for dimmed
+  // not-yet-paid segments, which sort after the solid ones).
   const sized = petals
-    .map((p) => ({ ...p, size: Math.max(0, p.actual) }))
+    .map((p) => ({ item: p, size: Math.max(0, p.actual) }))
     .filter((p) => p.size > 0)
-    .sort((a, b) => (a.dim === b.dim ? b.size - a.size : a.dim ? 1 : -1));
+    .sort((a, b) => (a.item.dim === b.item.dim ? b.size - a.size : a.item.dim ? 1 : -1));
 
-  const totalSize = sized.reduce((s, p) => s + p.size, 0);
-  const totalActual = sized.filter((p) => !p.dim).reduce((s, p) => s + p.size, 0);
-  const denom = Math.max(income, totalSize, 1);
+  const totalActual = sized.filter((p) => !p.item.dim).reduce((s, p) => s + p.size, 0);
 
-  // Every petal gets a floor of MIN_SPAN degrees so even tiny categories stay
-  // tappable and keep fully rounded corners; the leftover arc ("flexible") is
-  // shared out proportionally between the petals and the unspent-income
-  // remainder. Falls back to an even split if there are too many petals to fit.
-  const n = sized.length;
-  const minSpan = n > 0 ? Math.min(MIN_SPAN, 150 / n) : 0;
-  const flexible = Math.max(0, 180 - n * minSpan);
-
-  let cursor = 180;
-  const wedges = sized.map((p) => {
-    const span = minSpan + (p.size / denom) * flexible;
-    const aH = cursor - GAP / 2;
-    const aL = cursor - span + GAP / 2;
-    const mid = (aH + aL) / 2;
-    cursor -= span;
-    return { p, aH, aL, mid, span };
+  const { wedges, remainder, remainderValue } = allocate(sized, income, {
+    start: 90,
+    gap: GAP,
+    minSpan: MIN_SPAN,
   });
-  const remainderSpan = Math.max(0, (denom - totalSize) / denom) * flexible;
-  const remainderValue = Math.max(0, denom - totalSize);
-  const remainder =
-    remainderSpan > GAP
-      ? {
-          aH: cursor - GAP / 2,
-          aL: cursor - remainderSpan + GAP / 2,
-          mid: cursor - remainderSpan / 2,
-        }
-      : null;
+  const denom = Math.max(income, sized.reduce((s, p) => s + p.size, 0), 1);
 
-  const activePetal = wedges.find((w) => w.p.key === active);
+  const activePetal = wedges.find((w) => w.item.key === active);
+
+  const hit = (arc: Arc, key: string, onClick?: () => void) => (
+    <path
+      d={wedgePath(G, arc.aH, arc.aL)}
+      fill="transparent"
+      fillRule="evenodd"
+      style={{
+        pointerEvents: "all",
+        cursor: onClick ? "pointer" : "default",
+        touchAction: "manipulation",
+      }}
+      onMouseEnter={() => setActive(key)}
+      onMouseLeave={() => setActive((k) => (k === key ? null : k))}
+      onClick={() => {
+        setActive(key);
+        onClick?.();
+      }}
+    />
+  );
 
   return (
     <div className="relative w-full">
-      <svg width="100%" viewBox={`0 0 ${VB_W} ${VB_H}`} style={{ display: "block" }}>
-        {/* baseline track */}
-        <path
-          d={`M ${f(pt(Ri - 3, 180))} A ${Ri - 3} ${Ri - 3} 0 0 1 ${f(pt(Ri - 3, 0))}`}
+      <svg width="100%" viewBox={`0 0 ${VB} ${VB}`} style={{ display: "block" }}>
+        {/* baseline track, just inside the ring */}
+        <circle
+          cx={G.cx}
+          cy={G.cy}
+          r={Ri - 5}
           fill="none"
           stroke="var(--color-hairline)"
           strokeWidth={2.5}
         />
         {wedges.map((w) => (
-          <g key={w.p.key}>
-            {/* solid petal (dimmed while committed-but-unpaid) */}
-            <path d={wedgePath(w.aH, w.aL)} fill={w.p.color} opacity={w.p.dim ? 0.38 : 1} />
-            {/* active ring */}
-            {active === w.p.key && (
-              <path d={wedgePath(w.aH, w.aL)} fill="none" stroke="#fff" strokeOpacity={0.5} strokeWidth={1.5} />
+          <g key={w.item.key}>
+            {/* solid wedge (dimmed while committed-but-unpaid) */}
+            <path
+              d={wedgePath(G, w.aH, w.aL)}
+              fill={w.item.color}
+              fillRule="evenodd"
+              opacity={w.item.dim ? 0.38 : 1}
+            />
+            {active === w.item.key && (
+              <path
+                d={wedgePath(G, w.aH, w.aL)}
+                fill="none"
+                fillRule="evenodd"
+                stroke="#fff"
+                strokeOpacity={0.5}
+                strokeWidth={1.5}
+              />
             )}
             {/* transparent hit target on top — reliable tap/click across devices */}
-            <path
-              d={wedgePath(w.aH, w.aL)}
-              fill="transparent"
-              style={{ pointerEvents: "all", cursor: onPetalClick ? "pointer" : "default", touchAction: "manipulation" }}
-              onMouseEnter={() => setActive(w.p.key)}
-              onMouseLeave={() => setActive((k) => (k === w.p.key ? null : k))}
-              onClick={() => {
-                setActive(w.p.key);
-                onPetalClick?.(w.p.key);
-              }}
-            />
+            {hit(w, w.item.key, () => onPetalClick?.(w.item.key))}
           </g>
         ))}
-        {/* neutral remainder (unallocated income) */}
+        {/* neutral remainder — the month's float */}
         {remainder && (
           <g>
-            <path d={wedgePath(remainder.aH, remainder.aL)} fill={REMAIN_COLOR} opacity={0.5} />
-            {active === "__remain" && (
-              <path d={wedgePath(remainder.aH, remainder.aL)} fill="none" stroke="#fff" strokeOpacity={0.5} strokeWidth={1.5} />
-            )}
             <path
-              d={wedgePath(remainder.aH, remainder.aL)}
-              fill="transparent"
-              style={{ pointerEvents: "all", touchAction: "manipulation" }}
-              onMouseEnter={() => setActive("__remain")}
-              onMouseLeave={() => setActive((k) => (k === "__remain" ? null : k))}
-              onClick={() => setActive("__remain")}
+              d={wedgePath(G, remainder.aH, remainder.aL)}
+              fill={REMAIN_COLOR}
+              fillRule="evenodd"
+              opacity={0.5}
             />
+            {active === "__remain" && (
+              <path
+                d={wedgePath(G, remainder.aH, remainder.aL)}
+                fill="none"
+                fillRule="evenodd"
+                stroke="#fff"
+                strokeOpacity={0.5}
+                strokeWidth={1.5}
+              />
+            )}
+            {hit(remainder, "__remain")}
           </g>
         )}
       </svg>
 
-      {/* icons — only where the petal is wide enough */}
+      {/* icons — only where the wedge is wide enough. Positioned, never
+          rotated, so they read upright all the way round. */}
       {wedges.map((w) =>
         w.span >= MIN_ICON_DEG ? (
           <span
-            key={`ic-${w.p.key}`}
+            key={`ic-${w.item.key}`}
             className="material-symbols-outlined absolute pointer-events-none"
             style={{
-              left: pct(pt(RC, w.mid)[0], VB_W),
-              top: pct(pt(RC, w.mid)[1], VB_H),
+              left: pct(point(G, G.rc, w.mid)[0], VB),
+              top: pct(point(G, G.rc, w.mid)[1], VB),
               transform: "translate(-50%, -50%)",
               fontSize: 22,
               color: "#fff",
             }}
           >
-            {w.p.icon}
+            {w.item.icon}
           </span>
         ) : null,
       )}
 
-      {/* center readout — petal taps pass through; only the text block itself
-          becomes a hit target when the center is actionable */}
-      <div className="absolute inset-x-0 text-center pointer-events-none" style={{ top: pct(CY - 92, VB_H) }}>
+      {/* centre readout — wedge taps pass through; only the text block itself
+          becomes a hit target when the centre is actionable */}
+      <div className="absolute inset-0 flex items-center justify-center text-center pointer-events-none">
         <div
           className={`inline-block ${onCenterClick ? "pointer-events-auto cursor-pointer active:opacity-70" : ""}`}
           onClick={onCenterClick}
@@ -203,7 +201,7 @@ export function Gauge({ petals, income, center, onPetalClick, onCenterClick }: P
           <p className="text-xs" style={{ color: "var(--color-muted)" }}>
             {center?.label ?? "Spent"}
           </p>
-          <p className="font-figure text-[32px] font-bold leading-tight" style={{ color: "var(--color-text)" }}>
+          <p className="font-figure text-[34px] font-bold leading-tight" style={{ color: "var(--color-text)" }}>
             {center?.value ?? fmt0(totalActual)}
           </p>
           <p className="text-xs" style={{ color: "var(--color-faint)" }}>
@@ -212,42 +210,28 @@ export function Gauge({ petals, income, center, onPetalClick, onCenterClick }: P
         </div>
       </div>
 
-      {/* tooltip — flips below the petal (inside the arc) near the top of the
-          viewbox, where an above-the-petal tooltip would clip off-screen */}
       {activePetal && (
-        <div
-          className={`absolute z-10 -translate-x-1/2 ${tooltipFlips(activePetal.mid) ? "" : "-translate-y-full"} rounded-[10px] px-3 py-2 pointer-events-none shadow-lg`}
-          style={{
-            left: pct(pt(RC, activePetal.mid)[0], VB_W),
-            top: tooltipFlips(activePetal.mid)
-              ? `calc(${pct(pt(Ri - 6, activePetal.mid)[1], VB_H)} + 6px)`
-              : `calc(${pct(pt(Ro, activePetal.mid)[1], VB_H)} - 6px)`,
-            background: "var(--color-elevated)",
-            border: "1px solid var(--color-hairline)",
-            minWidth: 150,
-            maxWidth: 220,
-          }}
-        >
+        <Tooltip mid={activePetal.mid}>
           <p className="text-xs font-semibold mb-0.5" style={{ color: "var(--color-text)" }}>
-            {activePetal.p.label}
+            {activePetal.item.label}
           </p>
-          {activePetal.p.dim ? (
+          {activePetal.item.dim ? (
             <p className="text-[11px]" style={{ color: "var(--color-muted)" }}>
-              {fmt0(activePetal.p.actual)} upcoming — not paid yet
+              {fmt0(activePetal.item.actual)} upcoming — not paid yet
             </p>
           ) : (
             <>
               <p className="text-[11px]" style={{ color: "var(--color-muted)" }}>
-                {fmt0(activePetal.p.actual)} of {fmt0(activePetal.p.budget)} budget
+                {fmt0(activePetal.item.actual)} of {fmt0(activePetal.item.budget)} budget
               </p>
               <p className="text-[11px]" style={{ color: "var(--color-faint)" }}>
-                3-mo avg {fmt0(activePetal.p.avg3)}
+                3-mo avg {fmt0(activePetal.item.avg3)}
               </p>
             </>
           )}
-          {activePetal.p.breakdown && activePetal.p.breakdown.length > 0 && (
+          {activePetal.item.breakdown && activePetal.item.breakdown.length > 0 && (
             <div className="mt-1 pt-1 space-y-0.5" style={{ borderTop: "1px solid var(--color-hairline)" }}>
-              {activePetal.p.breakdown.map((b) => (
+              {activePetal.item.breakdown.map((b) => (
                 <p key={b.label} className="text-[11px] flex justify-between gap-3" style={{ color: "var(--color-muted)" }}>
                   <span className="truncate">{b.label}</span>
                   <span className="font-figure shrink-0" style={{ color: "var(--color-text)" }}>
@@ -257,31 +241,18 @@ export function Gauge({ petals, income, center, onPetalClick, onCenterClick }: P
               ))}
             </div>
           )}
-        </div>
+        </Tooltip>
       )}
 
-      {/* remainder tooltip */}
       {active === "__remain" && remainder && (
-        <div
-          className={`absolute z-10 -translate-x-1/2 ${tooltipFlips(remainder.mid) ? "" : "-translate-y-full"} rounded-[10px] px-3 py-2 pointer-events-none shadow-lg`}
-          style={{
-            left: pct(pt(RC, remainder.mid)[0], VB_W),
-            top: tooltipFlips(remainder.mid)
-              ? `calc(${pct(pt(Ri - 6, remainder.mid)[1], VB_H)} + 6px)`
-              : `calc(${pct(pt(Ro, remainder.mid)[1], VB_H)} - 6px)`,
-            background: "var(--color-elevated)",
-            border: "1px solid var(--color-hairline)",
-            minWidth: 150,
-            maxWidth: 220,
-          }}
-        >
+        <Tooltip mid={remainder.mid}>
           <p className="text-xs font-semibold mb-0.5" style={{ color: "var(--color-text)" }}>
             {center?.label ?? "Remaining"}
           </p>
           <p className="text-[11px]" style={{ color: "var(--color-muted)" }}>
-            {fmt0(remainderValue)} of {fmt0(income)} — not spent or committed
+            {fmt0(remainderValue)} of {fmt0(denom)} — not spent or committed
           </p>
-        </div>
+        </Tooltip>
       )}
     </div>
   );
