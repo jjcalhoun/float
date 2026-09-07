@@ -20,6 +20,7 @@ export interface Account {
   monthly_payment?: number | null; // what you actually pay each month (total)
   escrow_amount?: number | null; // part of the payment that isn't debt paydown
   escrow_category_id?: string | null; // category for the monthly escrow posting
+  payment_category_id?: string | null; // home screen: show the whole payment under this category
   statement_day?: number | null; // liability accounts: day interest posts
   live_balance?: number | null; // SimpleFIN live balance for linked accounts
   live_balance_at?: string | null;

@@ -107,9 +107,17 @@ export function HomeScreen() {
     [accounts],
   );
 
+  /* Loans whose whole payment shows under a category instead of Debt
+     payments — a mortgage under Housing, say. See rollup(). */
+  const paymentCategoryByAccount = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const a of accounts) if (a.payment_category_id) out[a.id] = a.payment_category_id;
+    return out;
+  }, [accounts]);
+
   const roll = useMemo(
-    () => rollup(transactions, month, undefined, savingsIds, loanIds),
-    [transactions, month, savingsIds, loanIds],
+    () => rollup(transactions, month, undefined, savingsIds, loanIds, { paymentCategoryByAccount }),
+    [transactions, month, savingsIds, loanIds, paymentCategoryByAccount],
   );
   const categoryById = useMemo(
     () => Object.fromEntries(categories.map((c) => [c.id, c])),
@@ -200,22 +208,27 @@ export function HomeScreen() {
   const avg3ByCat = useMemo(() => {
     const acc: Record<string, number> = {};
     for (let i = 1; i <= 3; i++) {
-      const r = rollup(transactions, addMonth(month, -i), undefined, savingsIds, loanIds);
+      const r = rollup(transactions, addMonth(month, -i), undefined, savingsIds, loanIds, {
+        paymentCategoryByAccount,
+      });
       for (const [id, v] of Object.entries(r.byCat)) if (v > 0) acc[id] = (acc[id] ?? 0) + v;
     }
     const out: Record<string, number> = {};
     for (const id in acc) out[id] = acc[id] / 3;
     return out;
-  }, [transactions, month, savingsIds, loanIds]);
+  }, [transactions, month, savingsIds, loanIds, paymentCategoryByAccount]);
 
   /* ---- debt payments ---- */
   const debt = useMemo(() => {
-    const loans = accounts.filter((a) => a.type === "loan");
+    // A loan shown under a category is not a debt line here — its payment is
+    // already in that category, whole. It stays split on the Debt tab.
+    const loans = accounts.filter((a) => a.type === "loan" && !a.payment_category_id);
+    const shown = new Set(loans.map((a) => a.id));
     const byAccount: Record<string, number> = {};
     const txns = [];
     for (const t of transactions) {
       if (monthKey(t.date) !== month) continue;
-      if (t.type === "transfer" && t.amount > 0 && loanIds.has(t.account_id)) {
+      if (t.type === "transfer" && t.amount > 0 && shown.has(t.account_id)) {
         byAccount[t.account_id] = (byAccount[t.account_id] ?? 0) + t.amount;
         txns.push(t);
       }
@@ -827,6 +840,9 @@ export function HomeScreen() {
           transactions={transactions}
           month={month}
           monthlyTarget={categoryBudgets[detail.id] ?? 0}
+          paymentCategoryByAccount={paymentCategoryByAccount}
+          savingsAccountIds={savingsIds}
+          loanAccountIds={loanIds}
           onClose={() => setDetail(null)}
         />
       )}

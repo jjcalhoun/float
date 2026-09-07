@@ -29,13 +29,32 @@ export function monthKey(date: string | Date): string {
  *   income   — total income
  *   spend    — total net spend (sum of byCat values)
  */
+export interface RollupOptions {
+  /** account_id → category_id: show this account's whole payment under that
+   *  category instead of as a separate debt line. */
+  paymentCategoryByAccount?: Record<string, string>;
+}
+
 export function rollup(
   txns: Transaction[],
   month?: string,
   catBucket?: Record<string, BucketType>, // fallback bucket lookup if split.bucket missing
   savingsAccountIds: Set<string> = new Set(), // accounts whose transfers move the savings bucket
   loanAccountIds: Set<string> = new Set(), // loan/HELOC accounts whose paydowns count as spend
+  opts: RollupOptions = {},
 ): Rollup {
+  /* A loan payment shown as ONE line under a category.
+   *
+   * A mortgage payment is one payment, but the app had it in three places: the
+   * transfer under "Debt payments", the escrow counter-charge under Housing,
+   * and interest nowhere. Useful on the Debt tab, where the split between
+   * principal, interest and escrow is the whole point; wrong on the home
+   * screen, where $583.57 left the account once and belongs under Housing.
+   *
+   * Naming a category for the account moves the WHOLE payment there and drops
+   * that account's own splits, because escrow and interest are inside the
+   * payment already — counting both would show $814 for a $583 payment. */
+  const payTo = opts.paymentCategoryByAccount ?? {};
   const byCat: Record<string, number> = {};
   const byBucket: Record<BucketType, number> = { needs: 0, wants: 0, savings: 0 };
   let income = 0;
@@ -62,11 +81,17 @@ export function rollup(
         // never expensed — so it reduces net available. Filed under needs (a
         // debt obligation). Credit cards are excluded: their purchases already
         // counted, so counting the payment too would double-count.
+        const cat = payTo[txn.account_id];
+        if (cat) byCat[cat] = (byCat[cat] ?? 0) + txn.amount;
         byBucket.needs += txn.amount;
         spend += txn.amount;
       }
       continue;
     }
+
+    // Escrow and interest on an account whose payment is shown whole are
+    // INSIDE that payment; counting their splits again would double-charge it.
+    if (payTo[txn.account_id]) continue;
 
     // expense + refund: aggregate via splits
     for (const split of txn.splits ?? []) {

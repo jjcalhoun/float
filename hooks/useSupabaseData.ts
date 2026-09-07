@@ -394,6 +394,7 @@ export function useSetAccountMinPayment() {
       monthly_payment?: number | null;
       escrow_amount?: number | null;
       escrow_category_id?: string | null;
+      payment_category_id?: string | null;
     }) => {
       const { error } = await supabase.from("accounts").update(terms).eq("id", id);
       if (error) throw error;
