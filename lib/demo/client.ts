@@ -248,7 +248,7 @@ export function createDemoClient() {
     from: (table: string) => new Query(table),
     auth: {
       getUser: async () => ({
-        data: { user: { id: DEMO_USER_ID, email: "alex@demo.jrockwise.app" } },
+        data: { user: { id: DEMO_USER_ID, email: "alex@demo.float.app" } },
         error: null,
       }),
       signOut: async () => ({ error: null }),

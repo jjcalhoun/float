@@ -60,7 +60,7 @@ export default function LoginPage() {
             className="font-figure text-2xl font-bold"
             style={{ color: "var(--color-text)" }}
           >
-            JRock_Wise
+            Float
           </h1>
           <p className="mt-1 text-sm" style={{ color: "var(--color-muted)" }}>
             Your personal budget, simplified.
