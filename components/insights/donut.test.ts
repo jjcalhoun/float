@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { allocate, wedgePath, point, type DonutGeometry } from "./donut";
+import { allocate, wedgePath, point, unaccounted, type DonutGeometry } from "./donut";
 
 /* The arc became a donut, and 180° of extra circle brought two shapes the old
    code could not draw: a wedge wider than a half turn, and a wedge that is the
@@ -102,6 +102,33 @@ describe("allocate", () => {
       const used = a.wedges.reduce((s, w) => s + w.span, 0) + (a.remainder?.span ?? 0);
       expect(used).toBeLessThanOrEqual(360.001);
     }
+  });
+});
+
+describe("unaccounted", () => {
+  /* The reported bug: the donut said $1,276 free, the centre said $366, and
+     the tooltip put the centre's LABEL over the ring's number. They are two
+     different quantities — the ring derived a leftover, the centre read the
+     ledger — so the ring stops deriving and shows the difference instead. */
+
+  it("is the gap between the wedges and the real free-to-spend", () => {
+    // the actual September numbers
+    expect(unaccounted(4531, 3255, 366)).toBe(910);
+  });
+
+  it("is zero when the wedges already account for the month", () => {
+    expect(unaccounted(4531, 4165, 366)).toBe(0);
+  });
+
+  it("never goes negative", () => {
+    // wedges can exceed income − free: the ring counts some things the ledger
+    // deliberately leaves out. Better to show no gap than a nonsense wedge.
+    expect(unaccounted(4531, 4400, 366)).toBe(0);
+  });
+
+  it("closes the circle by construction", () => {
+    const income = 4531, wedges = 3255, free = 366;
+    expect(wedges + unaccounted(income, wedges, free) + free).toBe(income);
   });
 });
 

@@ -95,6 +95,27 @@ export function wedgePath(g: DonutGeometry, aH: number, aL: number): string {
   );
 }
 
+/** What the wedges don't account for.
+ *
+ *  The ring used to derive its neutral wedge as `income − wedges`, and the
+ *  centre read `freeToSpend` from the ledger. Those are not the same quantity
+ *  and they disagreed by $910 on a real month — the ring said $1,276 free
+ *  while the centre said $366, and the tooltip labelled the first one with the
+ *  second one's name.
+ *
+ *  They differ because the wedges are not a partition of the month. The ledger
+ *  splits it into commitments plus unlinked spend; the ring splits it into
+ *  categorised splits, loan transfers and unpaid commitments. A paid
+ *  commitment reaches the ring only if it left a categorised split or a loan
+ *  transfer, and the card-spending toggle moves one side and not the other.
+ *
+ *  So the ring stops deriving. The neutral wedge IS free-to-spend, and this is
+ *  the remainder that makes the circle close: money the ledger counted as gone
+ *  that no category claimed. Showing it as its own wedge is the point — as a
+ *  silent leftover it was inflating what looked spendable. */
+export const unaccounted = (income: number, wedgeTotal: number, free: number): number =>
+  Math.max(0, income - wedgeTotal - free);
+
 export interface AllocateOptions {
   /** where the first wedge starts, in degrees. 90 = twelve o'clock */
   start?: number;

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { fmt0 } from "@/lib/format";
-import { allocate, point, wedgePath, type Arc, type DonutGeometry } from "./donut";
+import { allocate, point, unaccounted, wedgePath, type Arc, type DonutGeometry } from "./donut";
 
 export interface GaugePetal {
   key: string;
@@ -19,9 +19,15 @@ export interface GaugePetal {
 interface Props {
   petals: GaugePetal[];
   income: number; // expected income — the circle's full scale
+  /** The ledger's free-to-spend. When given, the neutral wedge IS this number
+   *  rather than a leftover, and whatever the wedges don't account for gets
+   *  its own wedge. Omit it and the ring falls back to deriving (fine for a
+   *  past month, where the centre reads "Net" and makes no such claim). */
+  free?: number;
   center?: { label: string; value: string; sub?: string }; // readout override
   onPetalClick?: (key: string) => void;
   onCenterClick?: () => void; // e.g. open the ledger breakdown
+  onUnaccountedClick?: () => void;
 }
 
 /* Budget donut. The whole circle is expected income; each wedge is a category,
@@ -39,6 +45,8 @@ const MIN_SPAN = 5; // smallest wedge, in degrees — keeps it tappable + rounde
 
 const Ri = G.rc - G.th / 2;
 const REMAIN_COLOR = "#9A938A";
+/* Deliberately drab: this wedge is a question, not a category. */
+const UNACCOUNTED_COLOR = "#6B7280";
 
 const pct = (v: number, total: number) => `${(v / total) * 100}%`;
 
@@ -71,7 +79,15 @@ function Tooltip({ mid, children }: { mid: number; children: React.ReactNode }) 
   );
 }
 
-export function Gauge({ petals, income, center, onPetalClick, onCenterClick }: Props) {
+export function Gauge({
+  petals,
+  income,
+  free,
+  center,
+  onPetalClick,
+  onCenterClick,
+  onUnaccountedClick,
+}: Props) {
   const [active, setActive] = useState<string | null>(null);
 
   // Wedges are sized by actual spend (or the committed amount for dimmed
@@ -82,13 +98,42 @@ export function Gauge({ petals, income, center, onPetalClick, onCenterClick }: P
     .sort((a, b) => (a.item.dim === b.item.dim ? b.size - a.size : a.item.dim ? 1 : -1));
 
   const totalActual = sized.filter((p) => !p.item.dim).reduce((s, p) => s + p.size, 0);
+  const petalTotal = sized.reduce((s, p) => s + p.size, 0);
 
-  const { wedges, remainder, remainderValue } = allocate(sized, income, {
+  // Money the ledger counted as gone that no category claimed. Appending it as
+  // an ordinary wedge is what makes the neutral remainder come out equal to
+  // free-to-spend — the ring and the centre then read the same number because
+  // the circle adds up, not because anyone forced them to match.
+  const gap = free === undefined ? 0 : unaccounted(income, petalTotal, free);
+  const ringItems =
+    gap > 0
+      ? [
+          ...sized,
+          {
+            item: {
+              key: "__unaccounted",
+              label: "Not in a category",
+              color: UNACCOUNTED_COLOR,
+              icon: "help",
+              actual: gap,
+              budget: 0,
+              avg3: 0,
+            } as GaugePetal,
+            size: gap,
+          },
+        ]
+      : sized;
+
+  const { wedges, remainder, remainderValue } = allocate(ringItems, income, {
     start: 90,
     gap: GAP,
     minSpan: MIN_SPAN,
   });
-  const denom = Math.max(income, sized.reduce((s, p) => s + p.size, 0), 1);
+  const denom = Math.max(income, petalTotal, 1);
+  // The tooltip states the ledger's figure when we have it. Deriving it is a
+  // fallback, and it was the whole bug: a derived leftover wearing the
+  // centre's label.
+  const freeValue = free === undefined ? remainderValue : free;
 
   const activePetal = wedges.find((w) => w.item.key === active);
 
@@ -143,7 +188,11 @@ export function Gauge({ petals, income, center, onPetalClick, onCenterClick }: P
               />
             )}
             {/* transparent hit target on top — reliable tap/click across devices */}
-            {hit(w, w.item.key, () => onPetalClick?.(w.item.key))}
+            {hit(w, w.item.key, () =>
+              w.item.key === "__unaccounted"
+                ? onUnaccountedClick?.()
+                : onPetalClick?.(w.item.key),
+            )}
           </g>
         ))}
         {/* neutral remainder — the month's float */}
@@ -215,7 +264,12 @@ export function Gauge({ petals, income, center, onPetalClick, onCenterClick }: P
           <p className="text-xs font-semibold mb-0.5" style={{ color: "var(--color-text)" }}>
             {activePetal.item.label}
           </p>
-          {activePetal.item.dim ? (
+          {activePetal.item.key === "__unaccounted" ? (
+            <p className="text-[11px]" style={{ color: "var(--color-muted)" }}>
+              {fmt0(activePetal.item.actual)} counted as spent, but no category
+              claims it
+            </p>
+          ) : activePetal.item.dim ? (
             <p className="text-[11px]" style={{ color: "var(--color-muted)" }}>
               {fmt0(activePetal.item.actual)} upcoming — not paid yet
             </p>
@@ -250,7 +304,7 @@ export function Gauge({ petals, income, center, onPetalClick, onCenterClick }: P
             {center?.label ?? "Remaining"}
           </p>
           <p className="text-[11px]" style={{ color: "var(--color-muted)" }}>
-            {fmt0(remainderValue)} of {fmt0(denom)} — not spent or committed
+            {fmt0(freeValue)} of {fmt0(income)} — not spent or committed
           </p>
         </Tooltip>
       )}
