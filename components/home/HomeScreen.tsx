@@ -24,6 +24,7 @@ import { useTxnWindow } from "@/components/providers";
 import { rollup, loanPaydown, monthKey } from "@/lib/aggregations";
 import { debtPayment } from "@/lib/debt";
 import { ledger as buildLedger } from "@/lib/commitments/ledger";
+import { unaccountedItems } from "@/lib/commitments/unaccountedItems";
 import { fmt, fmt0, shortDate, currentMonthKey, monthLabel, addMonth } from "@/lib/format";
 import { BUCKETS } from "@/lib/buckets";
 import { Card } from "@/components/ui/Card";
@@ -74,6 +75,13 @@ export function HomeScreen() {
   // UNREVIEWED rows, so an already-reviewed deposit can only be reached here.
   const [editTxn, setEditTxn] = useState<Transaction | null>(null);
   const [debtOpen, setDebtOpen] = useState(false);
+  // Any wedge that isn't a category or the debt petal opens here: tapping a
+  // slice should show what is in it, whatever kind of slice it is.
+  const [segment, setSegment] = useState<{
+    segment: DetailSegment;
+    transactions: Transaction[];
+    breakdown?: { label: string; value: number }[];
+  } | null>(null);
   const [showReview, setShowReview] = useState(false);
 
   // category detail shows a 7-month history, so load 6 months before too
@@ -286,11 +294,51 @@ export function HomeScreen() {
       .sort((a, b) => b.spend - a.spend);
   }, [roll.byCat, categoryById]);
 
+  // What is actually inside the "not in a category" wedge — see
+  // lib/commitments/unaccountedItems.ts. Computed here so the wedge can be
+  // opened like any other.
+  const unaccounted = useMemo(
+    () =>
+      unaccountedItems(
+        transactions,
+        month,
+        { creditAccountIds: creditIds, loanAccountIds: loanIds, savingsAccountIds: savingsIds },
+        { countCardPurchases: countCards },
+      ),
+    [transactions, month, creditIds, loanIds, savingsIds, countCards],
+  );
+
   function onPetalClick(key: string) {
     if (key === "debt") return setDebtOpen(true);
-    if (key.startsWith("pending:")) return setSheet("ledger");
+
+    // Upcoming commitments: no transactions yet, so the breakdown IS the
+    // content — the individual bills the wedge is made of.
+    if (key.startsWith("pending:")) {
+      const p = petals.find((x) => x.key === key);
+      if (!p) return;
+      return setSegment({
+        segment: { label: p.label, color: p.color, icon: p.icon, value: p.actual },
+        transactions: [],
+        breakdown: p.breakdown,
+      });
+    }
+
     const c = categoryById[key.slice(4)];
     if (c) setDetail(c);
+  }
+
+  function onUnaccountedClick() {
+    const byId = new Map(transactions.map((t) => [t.id, t]));
+    setSegment({
+      segment: {
+        label: "Not in a category",
+        color: "#6B7280",
+        icon: "help",
+        value: unaccounted.reduce((s, r) => s + r.gap, 0),
+      },
+      transactions: unaccounted.map((r) => byId.get(r.id)).filter((t): t is Transaction => !!t),
+      breakdown: unaccounted.map((r) => ({ label: r.label, value: r.gap })),
+    });
   }
 
   const netCash = accounts.reduce((s, a) => s + (balances[a.id] ?? 0), 0);
@@ -349,7 +397,7 @@ export function HomeScreen() {
             center={center}
             onPetalClick={onPetalClick}
             onCenterClick={isCurrent ? () => setSheet("ledger") : undefined}
-            onUnaccountedClick={isCurrent ? () => setSheet("ledger") : undefined}
+            onUnaccountedClick={isCurrent ? onUnaccountedClick : undefined}
           />
         </div>
         {isCurrent && hasCards && (
@@ -729,6 +777,16 @@ export function HomeScreen() {
           month={month}
           monthlyTarget={categoryBudgets[detail.id] ?? 0}
           onClose={() => setDetail(null)}
+        />
+      )}
+      {segment && (
+        <SegmentDetail
+          segment={segment.segment}
+          transactions={segment.transactions}
+          month={month}
+          accountNameById={accountNameById}
+          breakdown={segment.breakdown}
+          onClose={() => setSegment(null)}
         />
       )}
       {debtOpen && (
