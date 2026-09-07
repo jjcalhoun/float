@@ -19,6 +19,7 @@ export interface Account {
   min_payment?: number | null; // liability accounts: the lender's minimum
   monthly_payment?: number | null; // what you actually pay each month (total)
   escrow_amount?: number | null; // part of the payment that isn't debt paydown
+  escrow_category_id?: string | null; // category for the monthly escrow posting
   statement_day?: number | null; // liability accounts: day interest posts
   live_balance?: number | null; // SimpleFIN live balance for linked accounts
   live_balance_at?: string | null;

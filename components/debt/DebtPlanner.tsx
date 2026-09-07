@@ -8,7 +8,7 @@ import type { Account, Settings } from "@/lib/types";
 import { fmt0 } from "@/lib/format";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
-import { useSetAccountMinPayment, useUpdateSettings } from "@/hooks/useSupabaseData";
+import { useSetAccountMinPayment, useUpdateSettings, useCategories } from "@/hooks/useSupabaseData";
 import { minPayment as estMinPayment, debtPayment } from "@/lib/debt";
 
 // Recharts is heavy — load the charts only after the rest of the tab paints.
@@ -269,8 +269,10 @@ function MinPaymentRow({
     min_payment?: number | null;
     monthly_payment?: number | null;
     escrow_amount?: number | null;
+    escrow_category_id?: string | null;
   }) => void;
 }) {
+  const { data: categories = [] } = useCategories();
   // Escrow is really a mortgage thing — a HELOC, student loan or card doesn't
   // have one, and the app has no way to tell a mortgage from any other loan.
   // So the field appears only where it's already in use, with a way to add it
@@ -327,10 +329,35 @@ function MinPaymentRow({
       </div>
 
       {hasEscrow && (
-        <p className="text-xs" style={{ color: "var(--color-faint)" }}>
-          {fmt0(gross)} paid, {fmt0(account.escrow_amount ?? 0)} to escrow —{" "}
-          <span style={{ color: "var(--color-text)" }}>{fmt0(paydown)}</span> against the balance
-        </p>
+        <>
+          <p className="text-xs" style={{ color: "var(--color-faint)" }}>
+            {fmt0(gross)} paid, {fmt0(account.escrow_amount ?? 0)} to escrow —{" "}
+            <span style={{ color: "var(--color-text)" }}>{fmt0(paydown)}</span> against the balance
+          </p>
+          {/* Escrow posts monthly on its own and never counts as spending, so
+              this only decides which category it SHOWS under. Left unset it
+              posts uncategorised, as it always did. */}
+          <label className="flex items-center gap-2 text-xs" style={{ color: "var(--color-faint)" }}>
+            <span className="shrink-0">shows under</span>
+            <select
+              value={account.escrow_category_id ?? ""}
+              onChange={(e) => onSave({ escrow_category_id: e.target.value || null })}
+              className="flex-1 min-w-0 rounded-lg px-2 py-1 text-xs outline-none border"
+              style={{
+                background: "var(--color-elevated)",
+                color: "var(--color-text)",
+                borderColor: "var(--color-hairline)",
+              }}
+            >
+              <option value="">No category</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
       )}
     </div>
   );
