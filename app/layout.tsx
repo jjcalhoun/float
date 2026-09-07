@@ -4,10 +4,10 @@ import { Providers } from "@/components/providers";
 import { RegisterSW } from "@/components/pwa/RegisterSW";
 
 export const metadata: Metadata = {
-  title: "JRock_Wise",
+  title: "Float",
   description: "Personal budget PWA",
   manifest: "/manifest.json",
-  appleWebApp: { capable: true, statusBarStyle: "default", title: "JRock_Wise" },
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "Float" },
 };
 
 export const viewport: Viewport = {

@@ -26,7 +26,7 @@ export function SideNav() {
           <AppLogo className="w-full h-full" />
         </span>
         <span className="font-figure text-lg font-bold" style={{ color: "var(--color-text)" }}>
-          JRock_Wise
+          Float
         </span>
       </div>
 

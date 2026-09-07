@@ -1,4 +1,4 @@
-# jrock_wise
+# Float
 
 A personal-finance PWA. Next.js + Supabase + React Query, deployed on Vercel.
 
