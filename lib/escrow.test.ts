@@ -26,7 +26,16 @@ async function reset() {
   await db.from("transactions").delete().eq("user_id", U);
   await db.from("accounts").delete().eq("user_id", U);
   await db.from("simplefin_account_map").delete().eq("user_id", U);
+  await db.from("transaction_splits").delete().eq("user_id", U);
 }
+
+const splitsFor = async (txns: { id: string }[]) => {
+  const { data } = await db
+    .from("transaction_splits")
+    .select("*")
+    .in("transaction_id", txns.map((t) => t.id));
+  return data ?? [];
+};
 
 const rows = async () => {
   const { data } = await db.from("transactions").select("*").eq("user_id", U);
@@ -64,17 +73,42 @@ describe("postEscrow", () => {
     expect((await rows()).length).toBe(first.inserted);
   });
 
-  it("posts no split, so it never counts as spend", async () => {
-    // the money left your pocket once, in the mortgage payment; spend is
-    // computed from splits, so having none keeps it out of the budget
+  it("posts no split when the account names no category", async () => {
     await db.from("accounts").insert(account({ id: "m4", name: "Mortgage" }));
     await postEscrow(db, U);
-    const ids = (await rows()).map((t) => t.id);
-    const { data: splits } = await db
-      .from("transaction_splits")
-      .select("*")
-      .in("transaction_id", ids);
-    expect(splits ?? []).toEqual([]);
+    expect(await splitsFor(await rows())).toEqual([]);
+  });
+
+  it("attaches the account's category when it has one", async () => {
+    /* "Not spending" had been implemented as "no split", which also meant "not
+       in any category" — so several hundred dollars a month of plainly
+       housing-shaped money appeared nowhere in the breakdown. It is still not
+       spending: the ledger skips loan accounts outright, so free-to-spend
+       cannot see this row however it is categorised. */
+    await db
+      .from("accounts")
+      .insert(account({ id: "m5", name: "Mortgage", escrow_category_id: "housing" }));
+    await postEscrow(db, U);
+
+    const posted = await rows();
+    const splits = await splitsFor(posted);
+    expect(splits.length).toBe(posted.length);
+    for (const s of splits) {
+      expect(s.category_id).toBe("housing");
+      expect(s.bucket).toBe("needs"); // a mortgage is not discretionary
+    }
+  });
+
+  it("splits for the whole charge, matching the transaction's sign", async () => {
+    await db
+      .from("accounts")
+      .insert(account({ id: "m6", name: "Mortgage", escrow_category_id: "housing" }));
+    await postEscrow(db, U);
+
+    const posted = await rows();
+    const splits = await splitsFor(posted);
+    const byTxn = new Map(splits.map((s) => [s.transaction_id, s.amount]));
+    for (const t of posted) expect(byTxn.get(t.id)).toBe(t.amount);
   });
 
   it("skips statements already inside the entered balance", async () => {

@@ -21,10 +21,17 @@ import { todayISO } from "@/lib/dates";
  * A schedule-driven writer of transactions is exactly what the commitments
  * model removed, so the last one moves here and the generator goes.
  *
- * NO CATEGORY SPLIT, deliberately — same as interest. The money left your
- * pocket once already, in the mortgage payment; the spend is counted there.
- * This entry only corrects what the loan balance does, and spend is computed
- * from splits, so having none keeps it out of the budget twice over.
+ * It does NOT count as spending — same as interest. The money left your pocket
+ * once already, in the mortgage payment; the spend is counted there. The
+ * ledger enforces that by skipping loan accounts outright, so free-to-spend
+ * cannot see this row however it is categorised.
+ *
+ * It does, however, get a CATEGORY when the account names one
+ * (`accounts.escrow_category_id`). The category rollup reads splits, so
+ * without one several hundred dollars a month of plainly housing-shaped money
+ * appears in no category at all — while still, correctly, not being spending.
+ * Those two things were conflated: "not spending" was implemented as "no
+ * split", which also meant "not anything".
  */
 
 export interface EscrowResult {
@@ -69,23 +76,41 @@ export async function postEscrow(
       const externalId = `escrow:${a.id}:${monthKey}`;
       if (posted.has(externalId)) continue;
 
-      const { error } = await supabase.from("transactions").insert({
-        user_id: userId,
-        account_id: a.id,
-        date: postDate,
-        amount: -escrow, // increases what's owed, offsetting the payment
-        description: "Escrow",
-        merchant: "Escrow",
-        type: "expense",
-        source: "escrow",
-        external_id: externalId,
-        reviewed: true,
-      });
+      const { data: row, error } = await supabase
+        .from("transactions")
+        .insert({
+          user_id: userId,
+          account_id: a.id,
+          date: postDate,
+          amount: -escrow, // increases what's owed, offsetting the payment
+          description: "Escrow",
+          merchant: "Escrow",
+          type: "expense",
+          source: "escrow",
+          external_id: externalId,
+          reviewed: true,
+        })
+        .select("id")
+        .single();
       if (error) {
         errors.push(error.message);
         continue;
       }
       inserted++;
+
+      // The category, when the account names one. A failure here is not worth
+      // losing the transaction over — the row is what keeps the loan balance
+      // honest, and an uncategorised escrow is exactly what we had before.
+      if (a.escrow_category_id && row) {
+        const { error: splitError } = await supabase.from("transaction_splits").insert({
+          user_id: userId,
+          transaction_id: row.id,
+          category_id: a.escrow_category_id,
+          bucket: "needs", // a mortgage is not discretionary
+          amount: -escrow,
+        });
+        if (splitError) errors.push(splitError.message);
+      }
     }
   }
 
