@@ -112,8 +112,12 @@ function ringAmount(
         (t.amount < 0 && has(t.transfer_account_id ?? ""))
       );
     };
-    // A payment shown under a category has a slice like any other.
-    return into(ctx.loanAccountIds) || into(ctx.savingsAccountIds) || into(payTo)
+    // Loans and cards both reach the debt petal; savings has its own; and a
+    // payment shown under a category has a slice like any other.
+    return into(ctx.loanAccountIds) ||
+      into(ctx.creditAccountIds) ||
+      into(ctx.savingsAccountIds) ||
+      into(payTo)
       ? Math.abs(t.amount)
       : 0;
   }

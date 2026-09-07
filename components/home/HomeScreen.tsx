@@ -220,9 +220,16 @@ export function HomeScreen() {
 
   /* ---- debt payments ---- */
   const debt = useMemo(() => {
-    // A loan shown under a category is not a debt line here — its payment is
-    // already in that category, whole. It stays split on the Debt tab.
-    const loans = accounts.filter((a) => a.type === "loan" && !a.payment_category_id);
+    /* Cards belong here too. A card payment IS a debt payment, and it had no
+       slice of its own — rollup skips card transfers because the purchases
+       already counted — so it fell into "not in a category". This is the
+       natural home for it, rather than asking for a category that doesn't
+       describe it.
+       An account shown under a category is not a debt line here: its payment
+       is already in that category. Either way the Debt tab is unaffected. */
+    const loans = accounts.filter(
+      (a) => (a.type === "loan" || a.type === "credit") && !a.payment_category_id,
+    );
     const shown = new Set(loans.map((a) => a.id));
     const byAccount: Record<string, number> = {};
     const txns = [];
@@ -241,13 +248,13 @@ export function HomeScreen() {
       0,
     );
     let avg = 0;
-    for (let i = 1; i <= 3; i++) avg += loanPaydown(transactions, loanIds, addMonth(month, -i));
+    for (let i = 1; i <= 3; i++) avg += loanPaydown(transactions, shown, addMonth(month, -i));
     const breakdown = loans
       .filter((a) => (byAccount[a.id] ?? 0) > 0)
       .map((a) => ({ label: a.name, value: byAccount[a.id] }))
       .sort((x, y) => y.value - x.value);
     return { actual, budget: budgetAmt, avg3: avg / 3, breakdown, txns };
-  }, [transactions, accounts, loanIds, month, balances]);
+  }, [transactions, accounts, month, balances]);
 
   /* ---- savings actually set aside ---- */
   const savings = useMemo(() => {

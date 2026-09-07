@@ -34,11 +34,6 @@ const split = (amount: number, category_id = "groceries") =>
 const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
 
 describe("what belongs in the wedge", () => {
-  it("a card payment — nothing else in the ring shows it", () => {
-    const rows = unaccountedItems(C, [t({ id: "cc", account_id: "card", type: "transfer", amount: 300 })], "2026-09", ctx);
-    expect(rows[0].gap).toBe(300);
-  });
-
   it("a settled plan payment whose transaction was never categorised", () => {
     // the common one: marking a bill paid records the payment, not a category
     const rows = unaccountedItems(C, [t({ id: "bill", amount: -74.99, commitment_id: "c1" })], "2026-09", ctx);
@@ -61,6 +56,12 @@ describe("what belongs in the wedge", () => {
 describe("what must never appear", () => {
   it("an ordinary categorised purchase", () => {
     expect(unaccountedItems(C, [t({ id: "g", amount: -50, splits: split(-50) })], "2026-09", ctx)).toEqual([]);
+  });
+
+  it("a card payment — the debt petal shows it, same as a loan", () => {
+    expect(
+      unaccountedItems(C, [t({ id: "cc", account_id: "card", type: "transfer", amount: 300 })], "2026-09", ctx),
+    ).toEqual([]);
   });
 
   it("a loan payment — the debt petal already shows it", () => {
@@ -193,7 +194,7 @@ describe("totals", () => {
     const rows = unaccountedItems(
       C,
       [
-        t({ id: "cc", account_id: "card", type: "transfer", amount: 250 }),
+        t({ id: "bill", amount: -250, commitment_id: "a" }),
         t({ id: "part", amount: -100, commitment_id: "c1", splits: split(-40) }),
         t({ id: "fine", amount: -50, splits: split(-50) }),
       ],
@@ -218,12 +219,10 @@ describe("totals", () => {
 });
 
 describe("a transfer pair the plan already counted", () => {
-  it("shows ONE leg, not both — one payment, one hole", () => {
-    /* A paid card payment really does have nowhere to show: the debt petal
-       counts loan accounts only, and "upcoming card payments" stops being
-       upcoming once it is paid. So the paying leg belongs here. Its arriving
-       twin does not — that is the same money, and counting both was how the
-       ledger came to charge a mortgage to the month twice. */
+  it("shows neither leg — the debt petal covers cards too now", () => {
+    /* This test used to expect the paying leg here, back when the debt petal
+       counted loan accounts only and a paid card payment had nowhere to go.
+       Cards join that petal now, so both legs are accounted for. */
     const rows = unaccountedItems(
       [{ id: "cc1", period: "2026-09", skipped: false, covered_by: null }] as Commitment[],
       [
@@ -233,8 +232,7 @@ describe("a transfer pair the plan already counted", () => {
       "2026-09",
       ctx,
     );
-    expect(ids(rows)).toEqual(["out"]);
-    expect(rows[0].gap).toBe(300);
+    expect(rows).toEqual([]);
   });
 });
 
@@ -265,13 +263,15 @@ describe("a payment shown under a category", () => {
     expect(rows).toEqual([]);
   });
 
-  it("still reports it when no category is named", () => {
+  it("is accounted for even with no category, since Debt payments shows it", () => {
+    /* A card payment IS a debt payment, and it now joins that wedge by
+       default rather than needing a category that does not describe it. */
     const rows = unaccountedItems(
       C,
       [t({ id: "cc", account_id: "card", type: "transfer", amount: 300 })],
       "2026-09",
       ctx,
     );
-    expect(rows[0].gap).toBe(300);
+    expect(rows).toEqual([]);
   });
 });
