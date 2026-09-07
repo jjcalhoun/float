@@ -68,6 +68,40 @@ describe("what must never appear", () => {
     ).toEqual([]);
   });
 
+  it("the PAYING leg of a loan payment, seen from checking", () => {
+    /* The reported double count. A mortgage payment is a pair: money leaves
+       checking and arrives at the loan. The debt petal counts the arriving
+       leg, so reporting the departing one here put one payment in two wedges
+       at once — $583.57 under Debt payments AND under "not in a category". */
+    const rows = unaccountedItems(
+      [
+        t({
+          id: "pay",
+          account_id: "chk",
+          type: "transfer",
+          amount: -583.57,
+          transfer_account_id: "loan",
+          commitment_id: "mortgage",
+        }),
+      ],
+      "2026-09",
+      ctx,
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("both legs of a loan payment, when the feed sends both", () => {
+    const rows = unaccountedItems(
+      [
+        t({ id: "out", account_id: "chk", type: "transfer", amount: -300, transfer_account_id: "loan", commitment_id: "heloc" }),
+        t({ id: "in", account_id: "loan", type: "transfer", amount: 300 }),
+      ],
+      "2026-09",
+      ctx,
+    );
+    expect(rows).toEqual([]);
+  });
+
   it("income", () => {
     expect(unaccountedItems([t({ id: "pay", type: "income", amount: 1845.66 })], "2026-09", ctx)).toEqual([]);
   });
