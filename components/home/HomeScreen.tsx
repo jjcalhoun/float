@@ -44,6 +44,11 @@ import type { BucketType, Category, Transaction } from "@/lib/types";
 import type { CommitmentKind } from "@/lib/commitments/types";
 
 const DEBT_PETAL = { color: "#F97316", icon: "account_balance", label: "Debt payments" };
+/* Money actually moved into savings this month. It is a bucket everywhere else
+   in the app, but it had no wedge: rollup files savings transfers under
+   byBucket, never byCat, so a $100 transfer to savings showed up in no slice
+   and fell through to "not in a category". Saving is not uncategorised. */
+const SAVINGS_PETAL = { color: BUCKETS.savings.color, icon: "savings", label: "Savings" };
 
 /* Dimmed petals for committed-but-unpaid plan items, grouped by kind. */
 const PENDING_STYLE: Record<Exclude<CommitmentKind, "income">, { color: string; icon: string; label: string }> = {
@@ -231,6 +236,34 @@ export function HomeScreen() {
     return { actual, budget: budgetAmt, avg3: avg / 3, breakdown, txns };
   }, [transactions, accounts, loanIds, month, balances]);
 
+  /* ---- savings actually set aside ---- */
+  const savings = useMemo(() => {
+    const byAccount: Record<string, number> = {};
+    const txns: Transaction[] = [];
+    for (const t of transactions) {
+      if (monthKey(t.date) !== month) continue;
+      // the arriving leg only, so a pair counts once
+      if (t.type === "transfer" && t.amount > 0 && savingsIds.has(t.account_id)) {
+        byAccount[t.account_id] = (byAccount[t.account_id] ?? 0) + t.amount;
+        txns.push(t);
+      }
+    }
+    const actual = Object.values(byAccount).reduce((s, v) => s + v, 0);
+    let avg = 0;
+    for (let i = 1; i <= 3; i++) {
+      const m = addMonth(month, -i);
+      for (const t of transactions) {
+        if (monthKey(t.date) !== m) continue;
+        if (t.type === "transfer" && t.amount > 0 && savingsIds.has(t.account_id)) avg += t.amount;
+      }
+    }
+    const breakdown = accounts
+      .filter((a) => (byAccount[a.id] ?? 0) > 0)
+      .map((a) => ({ label: a.name, value: byAccount[a.id] }))
+      .sort((x, y) => y.value - x.value);
+    return { actual, budget: budget?.plan_savings ?? 0, avg3: avg / 3, breakdown, txns };
+  }, [transactions, accounts, savingsIds, month, budget]);
+
   /* ---- petals: actual spend + dimmed upcoming commitments ---- */
   const petals: GaugePetal[] = useMemo(() => {
     const keys = new Set(Object.keys(roll.byCat).filter((id) => roll.byCat[id] > 0));
@@ -247,6 +280,16 @@ export function HomeScreen() {
         avg3: avg3ByCat[id] ?? 0,
       }];
     });
+    if (savings.actual > 0) {
+      out.push({
+        key: "savings",
+        ...SAVINGS_PETAL,
+        actual: savings.actual,
+        budget: savings.budget,
+        avg3: savings.avg3,
+        breakdown: savings.breakdown,
+      });
+    }
     if (debt.actual > 0) {
       out.push({
         key: "debt",
@@ -285,7 +328,7 @@ export function HomeScreen() {
       }
     }
     return out;
-  }, [categoryBudgets, roll.byCat, categoryById, avg3ByCat, debt, isCurrent, led.items]);
+  }, [categoryBudgets, roll.byCat, categoryById, avg3ByCat, debt, savings, isCurrent, led.items]);
 
   const ranked = useMemo(() => {
     return Object.entries(roll.byCat)
@@ -300,16 +343,23 @@ export function HomeScreen() {
   const unaccounted = useMemo(
     () =>
       unaccountedItems(
+        commitments,
         transactions,
         month,
         { creditAccountIds: creditIds, loanAccountIds: loanIds, savingsAccountIds: savingsIds },
         { countCardPurchases: countCards },
       ),
-    [transactions, month, creditIds, loanIds, savingsIds, countCards],
+    [commitments, transactions, month, creditIds, loanIds, savingsIds, countCards],
   );
 
   function onPetalClick(key: string) {
     if (key === "debt") return setDebtOpen(true);
+    if (key === "savings")
+      return setSegment({
+        segment: { ...SAVINGS_PETAL, value: savings.actual },
+        transactions: savings.txns,
+        breakdown: savings.breakdown,
+      });
 
     // Upcoming commitments: no transactions yet, so the breakdown IS the
     // content — the individual bills the wedge is made of.

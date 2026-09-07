@@ -1,6 +1,7 @@
 import type { Transaction } from "@/lib/types";
 import { monthKey } from "@/lib/aggregations";
 import type { LedgerContext, LedgerOptions } from "./ledger";
+import type { Commitment } from "./types";
 
 /* What is actually inside the donut's "not in a category" wedge.
  *
@@ -77,8 +78,8 @@ function ledgerOutflow(
   return Math.max(0, splitTotal(t));
 }
 
-/** What of this transaction reaches a wedge: a category split, or the debt
- *  petal. Savings and card payments reach neither, which is why they show up.
+/** What of this transaction reaches a wedge: a category split, or the debt or
+ *  savings petals. A card payment reaches neither, which is why it shows up.
  *
  *  A loan payment is a PAIR — money leaving checking and money arriving at the
  *  loan — and the debt petal counts the arriving leg. Recognising only that
@@ -88,16 +89,24 @@ function ledgerOutflow(
 function ringAmount(t: Transaction, ctx: LedgerContext): number {
   if (t.type === "income") return 0;
   if (t.type === "transfer") {
-    const paysDownLoan =
-      (t.amount > 0 && ctx.loanAccountIds.has(t.account_id)) ||
-      (t.amount < 0 && ctx.loanAccountIds.has(t.transfer_account_id ?? ""));
-    return paysDownLoan ? Math.abs(t.amount) : 0;
+    const into = (ids: Set<string>) =>
+      (t.amount > 0 && ids.has(t.account_id)) ||
+      (t.amount < 0 && ids.has(t.transfer_account_id ?? ""));
+    return into(ctx.loanAccountIds) || into(ctx.savingsAccountIds) ? Math.abs(t.amount) : 0;
   }
   return Math.max(0, splitTotal(t));
 }
 
-/** Rows behind the "not in a category" wedge, largest first. */
+/** Rows behind the "not in a category" wedge, largest first.
+ *
+ *  Takes commitments because the ledger does not bucket everything by date: a
+ *  LINKED payment counts toward its commitment's period whatever day it
+ *  cleared, so a bill paid on the 2nd of the next month is still this month's.
+ *  Filtering by transaction date alone missed those entirely — they were
+ *  counted by the ledger, absent from this list, and the wedge and the sheet
+ *  disagreed by exactly that much. */
 export function unaccountedItems(
+  commitments: Commitment[],
   transactions: Transaction[],
   period: string,
   ctx: LedgerContext,
@@ -106,8 +115,21 @@ export function unaccountedItems(
   const spendView = opts.countCardPurchases ?? false;
   const out: UnaccountedRow[] = [];
 
+  // Skipped and covered lines count zero in the ledger, so their payments
+  // cannot leave a hole. Everything else in this period is fair game.
+  const counted = new Set(
+    commitments
+      .filter((c) => c.period === period && !c.skipped && !c.covered_by)
+      .map((c) => c.id),
+  );
+
   for (const t of transactions) {
-    if (monthKey(t.date) !== period) continue;
+    // A linked row belongs to its COMMITMENT's month; an unlinked one to its
+    // own date. Same rule as ledger.ts.
+    if (t.commitment_id) {
+      if (!counted.has(t.commitment_id)) continue;
+    } else if (monthKey(t.date) !== period) continue;
+
     const ledger = ledgerOutflow(t, ctx, spendView);
     if (ledger <= 0) continue;
     const ring = ringAmount(t, ctx);

@@ -2,6 +2,12 @@ import { describe, it, expect } from "vitest";
 import { unaccountedItems, unaccountedTotal } from "./unaccountedItems";
 import type { LedgerContext } from "./ledger";
 import type { Transaction } from "@/lib/types";
+import type { Commitment } from "./types";
+
+// Every commitment the tests link to, all live and in-period.
+const C = ["c1", "mortgage", "heloc", "a", "b", "c"].map(
+  (id) => ({ id, period: "2026-09", skipped: false, covered_by: null }) as Commitment,
+);
 
 /* The "not in a category" wedge used to be a subtraction, which made it the
    one slice you couldn't open — a residual has nothing in it. These pin what
@@ -28,25 +34,20 @@ const split = (amount: number, category_id = "groceries") =>
 const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
 
 describe("what belongs in the wedge", () => {
-  it("a savings transfer — real money, no category can hold it", () => {
-    const rows = unaccountedItems([t({ id: "sv", account_id: "save", type: "transfer", amount: 250 })], "2026-09", ctx);
-    expect(ids(rows)).toEqual(["sv"]);
-    expect(rows[0].gap).toBe(250);
-  });
-
-  it("a card payment — likewise", () => {
-    const rows = unaccountedItems([t({ id: "cc", account_id: "card", type: "transfer", amount: 300 })], "2026-09", ctx);
+  it("a card payment — nothing else in the ring shows it", () => {
+    const rows = unaccountedItems(C, [t({ id: "cc", account_id: "card", type: "transfer", amount: 300 })], "2026-09", ctx);
     expect(rows[0].gap).toBe(300);
   });
 
   it("a settled plan payment whose transaction was never categorised", () => {
     // the common one: marking a bill paid records the payment, not a category
-    const rows = unaccountedItems([t({ id: "bill", amount: -74.99, commitment_id: "c1" })], "2026-09", ctx);
+    const rows = unaccountedItems(C, [t({ id: "bill", amount: -74.99, commitment_id: "c1" })], "2026-09", ctx);
     expect(rows[0].gap).toBe(74.99);
   });
 
   it("only the UNCATEGORISED part of a partly-categorised payment", () => {
     const rows = unaccountedItems(
+      C,
       [t({ id: "part", amount: -100, commitment_id: "c1", splits: split(-40) })],
       "2026-09",
       ctx,
@@ -59,12 +60,12 @@ describe("what belongs in the wedge", () => {
 
 describe("what must never appear", () => {
   it("an ordinary categorised purchase", () => {
-    expect(unaccountedItems([t({ id: "g", amount: -50, splits: split(-50) })], "2026-09", ctx)).toEqual([]);
+    expect(unaccountedItems(C, [t({ id: "g", amount: -50, splits: split(-50) })], "2026-09", ctx)).toEqual([]);
   });
 
   it("a loan payment — the debt petal already shows it", () => {
     expect(
-      unaccountedItems([t({ id: "ln", account_id: "loan", type: "transfer", amount: 583.57 })], "2026-09", ctx),
+      unaccountedItems(C, [t({ id: "ln", account_id: "loan", type: "transfer", amount: 583.57 })], "2026-09", ctx),
     ).toEqual([]);
   });
 
@@ -74,6 +75,7 @@ describe("what must never appear", () => {
        leg, so reporting the departing one here put one payment in two wedges
        at once — $583.57 under Debt payments AND under "not in a category". */
     const rows = unaccountedItems(
+      C,
       [
         t({
           id: "pay",
@@ -92,6 +94,7 @@ describe("what must never appear", () => {
 
   it("both legs of a loan payment, when the feed sends both", () => {
     const rows = unaccountedItems(
+      C,
       [
         t({ id: "out", account_id: "chk", type: "transfer", amount: -300, transfer_account_id: "loan", commitment_id: "heloc" }),
         t({ id: "in", account_id: "loan", type: "transfer", amount: 300 }),
@@ -103,13 +106,14 @@ describe("what must never appear", () => {
   });
 
   it("income", () => {
-    expect(unaccountedItems([t({ id: "pay", type: "income", amount: 1845.66 })], "2026-09", ctx)).toEqual([]);
+    expect(unaccountedItems(C, [t({ id: "pay", type: "income", amount: 1845.66 })], "2026-09", ctx)).toEqual([]);
   });
 
   it("interest or escrow on a loan — the ledger never counted them", () => {
     // consequences of a payment that already counted; counting them here would
     // charge the month twice
     const rows = unaccountedItems(
+      C,
       [t({ id: "int", account_id: "loan", amount: -412.1 }), t({ id: "esc", account_id: "loan", amount: -230.91 })],
       "2026-09",
       ctx,
@@ -117,20 +121,41 @@ describe("what must never appear", () => {
     expect(rows).toEqual([]);
   });
 
-  it("the outbound leg of a transfer, so a pair counts once", () => {
+  it("a savings transfer — the Savings petal shows it now", () => {
+    /* This used to be the wedge's one legitimate resident, because saving had
+       no slice of its own: rollup files it under a bucket, never a category.
+       It has a petal now, so it is accounted for. */
     const rows = unaccountedItems(
+      C,
       [
-        t({ id: "out", account_id: "chk", type: "transfer", amount: -250 }),
+        t({ id: "out", account_id: "chk", type: "transfer", amount: -250, transfer_account_id: "save" }),
         t({ id: "in", account_id: "save", type: "transfer", amount: 250 }),
       ],
       "2026-09",
       ctx,
     );
-    expect(ids(rows)).toEqual(["in"]);
+    expect(rows).toEqual([]);
   });
 
-  it("another month", () => {
-    expect(unaccountedItems([t({ id: "x", date: "2026-08-10", commitment_id: "c" })], "2026-09", ctx)).toEqual([]);
+  it("a transaction in another month, linked to another month's line", () => {
+    const august = [{ id: "aug", period: "2026-08", skipped: false, covered_by: null }] as Commitment[];
+    expect(
+      unaccountedItems(august, [t({ id: "x", date: "2026-08-10", commitment_id: "aug" })], "2026-09", ctx),
+    ).toEqual([]);
+  });
+
+  it("a payment settling a SKIPPED or covered line — the ledger counts it zero", () => {
+    const odd = [
+      { id: "skip", period: "2026-09", skipped: true, covered_by: null },
+      { id: "cov", period: "2026-09", skipped: false, covered_by: "other" },
+    ] as Commitment[];
+    const rows = unaccountedItems(
+      odd,
+      [t({ id: "a", amount: -50, commitment_id: "skip" }), t({ id: "b", amount: -50, commitment_id: "cov" })],
+      "2026-09",
+      ctx,
+    );
+    expect(rows).toEqual([]);
   });
 });
 
@@ -138,19 +163,37 @@ describe("the card view moves one thing, deliberately", () => {
   const purchase = t({ id: "buy", account_id: "card", amount: -80, splits: split(-80) });
 
   it("a categorised card purchase is accounted for in the spend view", () => {
-    expect(unaccountedItems([purchase], "2026-09", ctx, { countCardPurchases: true })).toEqual([]);
+    expect(unaccountedItems(C, [purchase], "2026-09", ctx, { countCardPurchases: true })).toEqual([]);
   });
 
   it("and invisible to the ledger in the cash view, so still no row", () => {
-    expect(unaccountedItems([purchase], "2026-09", ctx, { countCardPurchases: false })).toEqual([]);
+    expect(unaccountedItems(C, [purchase], "2026-09", ctx, { countCardPurchases: false })).toEqual([]);
+  });
+});
+
+describe("a linked payment belongs to its LINE's month, not its own", () => {
+  it("counts a bill that cleared next month against this month", () => {
+    /* The ledger buckets a linked row by its commitment's period whatever day
+       it cleared. Filtering by transaction date alone missed those, so they
+       were counted by the ledger, absent from this list, and the wedge and the
+       sheet disagreed by exactly that much. */
+    const rows = unaccountedItems(
+      C,
+      [t({ id: "late", date: "2026-10-02", amount: -120, commitment_id: "c1" })],
+      "2026-09",
+      ctx,
+    );
+    expect(ids(rows)).toEqual(["late"]);
+    expect(rows[0].gap).toBe(120);
   });
 });
 
 describe("totals", () => {
   it("sums the gaps, not the transactions", () => {
     const rows = unaccountedItems(
+      C,
       [
-        t({ id: "sv", account_id: "save", type: "transfer", amount: 250 }),
+        t({ id: "cc", account_id: "card", type: "transfer", amount: 250 }),
         t({ id: "part", amount: -100, commitment_id: "c1", splits: split(-40) }),
         t({ id: "fine", amount: -50, splits: split(-50) }),
       ],
@@ -162,6 +205,7 @@ describe("totals", () => {
 
   it("orders by the size of the hole", () => {
     const rows = unaccountedItems(
+      C,
       [
         t({ id: "small", amount: -10, commitment_id: "a" }),
         t({ id: "big", amount: -900, commitment_id: "b" }),
