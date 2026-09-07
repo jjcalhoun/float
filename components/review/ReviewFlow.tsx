@@ -16,6 +16,7 @@ import { selectionFor } from "@/lib/commitments/restore";
 import { commitmentTransferTarget } from "@/lib/commitments/types";
 import { reviewKind } from "@/lib/commitments/series";
 import { monthKey } from "@/lib/aggregations";
+import { mergeQueue, nextIndex } from "@/lib/reviewQueue";
 import { CategoryGrid } from "@/components/transactions/CategoryGrid";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
@@ -40,12 +41,16 @@ export function ReviewFlow({ onClose }: { onClose: () => void }) {
   const { data: series = [] } = useSeries();
   const linkTxn = useLinkCommitment();
 
-  // snapshot the queue once so it stays stable as we review through it
+  // The queue is a snapshot so the order stays put as you review through it —
+  // a live filter would delete the row under your finger. But it GROWS: rows
+  // arrive in stages (a cached page, then the fetch; a widening date window; a
+  // sync finishing mid-review), and a queue frozen at the first render hid
+  // everything that came later until the screen was closed and reopened.
   const [queue, setQueue] = useState<Transaction[]>([]);
   const unreviewed = useMemo(() => transactions.filter((t) => !t.reviewed), [transactions]);
   useEffect(() => {
-    if (queue.length === 0 && unreviewed.length > 0) setQueue(unreviewed);
-  }, [unreviewed, queue.length]);
+    setQueue((cur) => mergeQueue(cur, unreviewed));
+  }, [unreviewed]);
 
   const [index, setIndex] = useState(0);
 
@@ -57,8 +62,7 @@ export function ReviewFlow({ onClose }: { onClose: () => void }) {
     [transactions],
   );
   useEffect(() => {
-    let i = index;
-    while (i < queue.length && (liveById[queue[i].id]?.reviewed ?? false)) i++;
+    const i = nextIndex(index, queue, (id) => liveById[id]?.reviewed ?? false);
     if (i !== index) setIndex(i);
   }, [index, queue, liveById]);
 
