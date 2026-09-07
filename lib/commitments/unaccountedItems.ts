@@ -78,11 +78,20 @@ function ledgerOutflow(
 }
 
 /** What of this transaction reaches a wedge: a category split, or the debt
- *  petal. Savings and card payments reach neither, which is why they show up. */
+ *  petal. Savings and card payments reach neither, which is why they show up.
+ *
+ *  A loan payment is a PAIR — money leaving checking and money arriving at the
+ *  loan — and the debt petal counts the arriving leg. Recognising only that
+ *  leg here reported the departing one as unaccounted for, so a mortgage
+ *  payment appeared in two wedges at once. Both legs describe one event, so
+ *  both have to see the debt petal that already shows it. */
 function ringAmount(t: Transaction, ctx: LedgerContext): number {
   if (t.type === "income") return 0;
   if (t.type === "transfer") {
-    return t.amount > 0 && ctx.loanAccountIds.has(t.account_id) ? t.amount : 0;
+    const paysDownLoan =
+      (t.amount > 0 && ctx.loanAccountIds.has(t.account_id)) ||
+      (t.amount < 0 && ctx.loanAccountIds.has(t.transfer_account_id ?? ""));
+    return paysDownLoan ? Math.abs(t.amount) : 0;
   }
   return Math.max(0, splitTotal(t));
 }
