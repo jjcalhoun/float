@@ -360,9 +360,9 @@ export function HomeScreen() {
         transactions,
         month,
         { creditAccountIds: creditIds, loanAccountIds: loanIds, savingsAccountIds: savingsIds },
-        { countCardPurchases: countCards },
+        { countCardPurchases: countCards, paymentCategoryByAccount },
       ),
-    [commitments, transactions, month, creditIds, loanIds, savingsIds, countCards],
+    [commitments, transactions, month, creditIds, loanIds, savingsIds, countCards, paymentCategoryByAccount],
   );
 
   function onPetalClick(key: string) {

@@ -98,13 +98,24 @@ function ledgerOutflow(
  *  leg here reported the departing one as unaccounted for, so a mortgage
  *  payment appeared in two wedges at once. Both legs describe one event, so
  *  both have to see the debt petal that already shows it. */
-function ringAmount(t: Transaction, ctx: LedgerContext): number {
+function ringAmount(
+  t: Transaction,
+  ctx: LedgerContext,
+  payTo: Record<string, string>,
+): number {
   if (t.type === "income") return 0;
   if (t.type === "transfer") {
-    const into = (ids: Set<string>) =>
-      (t.amount > 0 && ids.has(t.account_id)) ||
-      (t.amount < 0 && ids.has(t.transfer_account_id ?? ""));
-    return into(ctx.loanAccountIds) || into(ctx.savingsAccountIds) ? Math.abs(t.amount) : 0;
+    const into = (ids: Set<string> | Record<string, unknown>) => {
+      const has = (id: string) => (ids instanceof Set ? ids.has(id) : !!ids[id]);
+      return (
+        (t.amount > 0 && has(t.account_id)) ||
+        (t.amount < 0 && has(t.transfer_account_id ?? ""))
+      );
+    };
+    // A payment shown under a category has a slice like any other.
+    return into(ctx.loanAccountIds) || into(ctx.savingsAccountIds) || into(payTo)
+      ? Math.abs(t.amount)
+      : 0;
   }
   return Math.max(0, splitTotal(t));
 }
@@ -122,9 +133,10 @@ export function unaccountedItems(
   transactions: Transaction[],
   period: string,
   ctx: LedgerContext,
-  opts: LedgerOptions = {},
+  opts: LedgerOptions & { paymentCategoryByAccount?: Record<string, string> } = {},
 ): UnaccountedRow[] {
   const spendView = opts.countCardPurchases ?? false;
+  const payTo = opts.paymentCategoryByAccount ?? {};
   const out: UnaccountedRow[] = [];
 
   // Skipped and covered lines count zero in the ledger, so their payments
@@ -150,7 +162,7 @@ export function unaccountedItems(
 
     const ledger = ledgerOutflow(t, ctx, spendView, settledTransfers);
     if (ledger <= 0) continue;
-    const ring = ringAmount(t, ctx);
+    const ring = ringAmount(t, ctx, payTo);
     const gap = ledger - ring;
     if (gap <= 0.005) continue; // fully accounted for, or rounding
     out.push({ id: t.id, label: nameOf(t), date: t.date, ledger, ring, gap });

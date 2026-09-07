@@ -283,3 +283,56 @@ describe("paymentCategoryByAccount", () => {
     expect(byCat.housing).toBeCloseTo(230.91);
   });
 });
+
+/* The same for a card payment, with one deliberate difference.
+ *
+ * A paid card payment had no slice at all: cards are skipped in the transfer
+ * branch because their purchases already counted, so the money the ledger saw
+ * leaving had nowhere to show. Naming a category gives it one.
+ *
+ * The difference from a loan is that a card's SPLITS stay. Escrow is inside a
+ * mortgage payment; last month's groceries are not inside a card payment.
+ * They are separate money — which is the whole reason the card toggle counts
+ * both when a balance is carried. */
+describe("paymentCategoryByAccount, for a card", () => {
+  const loans = new Set<string>();
+  const payTo = { paymentCategoryByAccount: { visa: "debt" } };
+
+  const payment = {
+    id: "p", user_id: "u", account_id: "visa", transfer_account_id: "chk",
+    date: "2026-09-20", amount: 300, type: "transfer", source: "sync",
+    reviewed: true, created_at: "", updated_at: "",
+  } as Transaction;
+
+  const purchase = {
+    id: "b", user_id: "u", account_id: "visa", date: "2026-09-05",
+    amount: -80, type: "expense", source: "sync", reviewed: true,
+    created_at: "", updated_at: "",
+    splits: [{ id: "s", user_id: "u", transaction_id: "b", category_id: "groceries", bucket: "needs", amount: -80, created_at: "" }],
+  } as unknown as Transaction;
+
+  it("puts the payment under the named category", () => {
+    const { byCat } = rollup([payment], "2026-09", undefined, new Set(), loans, payTo);
+    expect(byCat.debt).toBe(300);
+  });
+
+  it("KEEPS the purchases in their own categories", () => {
+    // the loan rule would have dropped these; a card payment does not contain
+    // the things bought on the card
+    const { byCat } = rollup([payment, purchase], "2026-09", undefined, new Set(), loans, payTo);
+    expect(byCat.debt).toBe(300);
+    expect(byCat.groceries).toBe(80);
+  });
+
+  it("leaves an unnamed card exactly as it was — payment counts nothing", () => {
+    const { byCat, spend } = rollup([payment, purchase], "2026-09", undefined, new Set(), loans);
+    expect(byCat.debt).toBeUndefined();
+    expect(spend).toBe(80);
+  });
+
+  it("ignores the paying leg, so a pair counts once", () => {
+    const out = { ...payment, id: "o", account_id: "chk", transfer_account_id: "visa", amount: -300 } as Transaction;
+    const { byCat } = rollup([payment, out], "2026-09", undefined, new Set(), loans, payTo);
+    expect(byCat.debt).toBe(300);
+  });
+});
