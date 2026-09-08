@@ -44,13 +44,19 @@ const splitTotal = (t: Transaction) =>
 const nameOf = (t: Transaction) =>
   t.merchant || t.description || "Transaction";
 
-/** Same pair key as ledger.ts — both legs of one transfer resolve to it. */
+/** Same pair key as ledger.ts — both legs of one transfer resolve to it, and
+ *  deliberately without the date, which is compared separately. */
 const transferKey = (t: Transaction): string => {
   const a = t.account_id;
   const b = t.transfer_account_id ?? "";
   const [x, y] = a < b ? [a, b] : [b, a];
-  return `${x}|${y}|${Math.abs(t.amount).toFixed(2)}|${t.date}`;
+  return `${x}|${y}|${Math.abs(t.amount).toFixed(2)}`;
 };
+
+const PAIR_DAYS = 4;
+
+const daysBetween = (a: string, b: string) =>
+  Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86400000;
 
 /** What the ledger counts this transaction as putting out this month.
  *  Mirrors ledger.ts — if that changes, this has to change with it. */
@@ -58,18 +64,26 @@ function ledgerOutflow(
   t: Transaction,
   ctx: LedgerContext,
   spendView: boolean,
-  settledTransfers: Set<string>,
+  alreadySettled: (t: Transaction) => boolean,
+  outflowLegExists: (t: Transaction) => boolean,
 ): number {
   if (t.type === "income") return 0;
 
-  // Settled commitments are counted at what they actually cost, whatever
-  // shape the payment took.
-  if (t.commitment_id) return Math.max(0, -t.amount);
+  // Settled commitments are counted at what they actually cost, whatever shape
+  // the payment took. linkedActual prefers the OUTFLOW legs of a transfer, so
+  // an arriving leg counts only when there is no outflow leg to prefer —
+  // otherwise a pair linked to one line would be counted twice here, and the
+  // wedge and the sheet would drift apart again.
+  if (t.commitment_id) {
+    if (t.type !== "transfer") return Math.max(0, -t.amount);
+    if (t.amount < 0) return Math.abs(t.amount);
+    return outflowLegExists(t) ? 0 : Math.abs(t.amount);
+  }
 
   if (t.type === "transfer") {
     // The other half of a payment the plan already counted is not a second
     // payment. Mirrors the same guard in ledger.ts.
-    if (settledTransfers.has(transferKey(t))) return 0;
+    if (alreadySettled(t)) return 0;
     // Money landing in a loan, card or savings account is cash committed.
     // The destination leg only, so a pair counts once.
     if (
@@ -145,11 +159,24 @@ export function unaccountedItems(
 
   // Skipped and covered lines count zero in the ledger, so their payments
   // cannot leave a hole. Everything else in this period is fair game.
-  const settledTransfers = new Set<string>();
+  // Linked transfer legs, by pair. Any period's commitment counts, same as
+  // ledger.ts — a payment linked to another month's line is still that
+  // month's, not a second payment here.
+  const linkedLegs = new Map<string, Transaction[]>();
   for (const t of transactions) {
     if (t.type !== "transfer" || !t.commitment_id) continue;
-    settledTransfers.add(transferKey(t));
+    const key = transferKey(t);
+    const arr = linkedLegs.get(key);
+    if (arr) arr.push(t);
+    else linkedLegs.set(key, [t]);
   }
+  const near = (t: Transaction) =>
+    (linkedLegs.get(transferKey(t)) ?? []).filter(
+      (l) => l.id !== t.id && daysBetween(l.date, t.date) <= PAIR_DAYS,
+    );
+  const alreadySettled = (t: Transaction) => near(t).length > 0;
+  const outflowLegExists = (t: Transaction) =>
+    near(t).some((l) => l.amount < 0 && l.commitment_id === t.commitment_id);
 
   const counted = new Set(
     commitments
@@ -164,7 +191,7 @@ export function unaccountedItems(
       if (!counted.has(t.commitment_id)) continue;
     } else if (monthKey(t.date) !== period) continue;
 
-    const ledger = ledgerOutflow(t, ctx, spendView, settledTransfers);
+    const ledger = ledgerOutflow(t, ctx, spendView, alreadySettled, outflowLegExists);
     if (ledger <= 0) continue;
     const ring = ringAmount(t, ctx, payTo);
     const gap = ledger - ring;

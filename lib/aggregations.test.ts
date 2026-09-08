@@ -296,7 +296,13 @@ describe("paymentCategoryByAccount", () => {
  * both when a balance is carried. */
 describe("paymentCategoryByAccount, for a card", () => {
   const loans = new Set<string>();
-  const payTo = { paymentCategoryByAccount: { visa: "debt" } };
+  const cards = new Set(["visa"]);
+  // spend view: purchases count as they post, same as the ledger
+  const payTo = {
+    paymentCategoryByAccount: { visa: "debt" },
+    creditAccountIds: cards,
+    countCardPurchases: true,
+  };
 
   const payment = {
     id: "p", user_id: "u", account_id: "visa", transfer_account_id: "chk",
@@ -324,10 +330,26 @@ describe("paymentCategoryByAccount, for a card", () => {
     expect(byCat.groceries).toBe(80);
   });
 
-  it("leaves an unnamed card exactly as it was — payment counts nothing", () => {
-    const { byCat, spend } = rollup([payment, purchase], "2026-09", undefined, new Set(), loans);
+  it("an unnamed card payment still counts, just under no category", () => {
+    /* It used to count NOTHING here while the donut's Debt wedge showed it and
+       the ledger charged it — two cards on one screen disagreeing. */
+    const { byCat, byBucket, spend } = rollup([payment, purchase], "2026-09", undefined, new Set(), loans, {
+      creditAccountIds: cards,
+      countCardPurchases: true,
+    });
     expect(byCat.debt).toBeUndefined();
-    expect(spend).toBe(80);
+    expect(byCat.groceries).toBe(80);
+    expect(byBucket.needs).toBe(380); // 300 payment + the 80 groceries split
+    expect(spend).toBe(380);
+  });
+
+  it("cash view: the purchase waits for the payment, as in the ledger", () => {
+    const { byCat, spend } = rollup([payment, purchase], "2026-09", undefined, new Set(), loans, {
+      creditAccountIds: cards,
+      countCardPurchases: false,
+    });
+    expect(byCat.groceries).toBeUndefined();
+    expect(spend).toBe(300); // the payment only
   });
 
   it("ignores the paying leg, so a pair counts once", () => {

@@ -22,7 +22,7 @@ import { periodWindow } from "@/lib/commitments/period";
 import { todayISO } from "@/lib/dates";
 import { useTxnWindow } from "@/components/providers";
 import { rollup, loanPaydown, monthKey } from "@/lib/aggregations";
-import { debtPayment } from "@/lib/debt";
+import { grossPayment } from "@/lib/debt";
 import { ledger as buildLedger } from "@/lib/commitments/ledger";
 import { unaccountedItems } from "@/lib/commitments/unaccountedItems";
 import { fmt, fmt0, shortDate, currentMonthKey, monthLabel, addMonth } from "@/lib/format";
@@ -107,6 +107,10 @@ export function HomeScreen() {
     [accounts],
   );
 
+  // Cards: count the purchases, or count the payment that settles them —
+  // never both. rollup and the ledger must be told the same thing.
+  const countCards = settings?.count_card_purchases ?? true;
+
   /* Loans whose whole payment shows under a category instead of Debt
      payments — a mortgage under Housing, say. See rollup(). */
   const paymentCategoryByAccount = useMemo(() => {
@@ -116,8 +120,13 @@ export function HomeScreen() {
   }, [accounts]);
 
   const roll = useMemo(
-    () => rollup(transactions, month, undefined, savingsIds, loanIds, { paymentCategoryByAccount }),
-    [transactions, month, savingsIds, loanIds, paymentCategoryByAccount],
+    () =>
+      rollup(transactions, month, undefined, savingsIds, loanIds, {
+        paymentCategoryByAccount,
+        creditAccountIds: creditIds,
+        countCardPurchases: countCards,
+      }),
+    [transactions, month, savingsIds, loanIds, paymentCategoryByAccount, creditIds, countCards],
   );
   const categoryById = useMemo(
     () => Object.fromEntries(categories.map((c) => [c.id, c])),
@@ -130,9 +139,6 @@ export function HomeScreen() {
 
   /* ---- the free-to-spend ledger ---- */
   const { data: commitments = [] } = useCommitments(month);
-  // Cards: count the purchases, or count the payment that settles them —
-  // never both. See lib/commitments/ledger.ts.
-  const countCards = settings?.count_card_purchases ?? true;
   const led = useMemo(
     () =>
       buildLedger(
@@ -210,13 +216,15 @@ export function HomeScreen() {
     for (let i = 1; i <= 3; i++) {
       const r = rollup(transactions, addMonth(month, -i), undefined, savingsIds, loanIds, {
         paymentCategoryByAccount,
+        creditAccountIds: creditIds,
+        countCardPurchases: countCards,
       });
       for (const [id, v] of Object.entries(r.byCat)) if (v > 0) acc[id] = (acc[id] ?? 0) + v;
     }
     const out: Record<string, number> = {};
     for (const id in acc) out[id] = acc[id] / 3;
     return out;
-  }, [transactions, month, savingsIds, loanIds, paymentCategoryByAccount]);
+  }, [transactions, month, savingsIds, loanIds, paymentCategoryByAccount, creditIds, countCards]);
 
   /* ---- debt payments ---- */
   const debt = useMemo(() => {
@@ -241,10 +249,13 @@ export function HomeScreen() {
       }
     }
     const actual = Object.values(byAccount).reduce((s, v) => s + v, 0);
-    // escrow leaves checking but never pays down a loan, so the target is the
-    // debt-only portion of each payment
+    /* The target is the GROSS payment, escrow included, because that is what
+       this wedge measures: money that actually left the account. Using the
+       paydown (debtPayment) compared $583.57 paid against a $352.66 target and
+       made every month read as overspent. The Debt tab still uses the paydown,
+       which is the right number for a payoff date. */
     const budgetAmt = loans.reduce(
-      (s, a) => s + debtPayment(a, Math.max(0, -(balances[a.id] ?? 0))),
+      (s, a) => s + grossPayment(a, Math.max(0, -(balances[a.id] ?? 0))),
       0,
     );
     let avg = 0;
@@ -281,7 +292,11 @@ export function HomeScreen() {
       .filter((a) => (byAccount[a.id] ?? 0) > 0)
       .map((a) => ({ label: a.name, value: byAccount[a.id] }))
       .sort((x, y) => y.value - x.value);
-    return { actual, budget: budget?.plan_savings ?? 0, avg3: avg / 3, breakdown, txns };
+    /* plan_savings is a PERCENT of income — it is rendered as "plan 20%" in
+       the bucket card — so using it directly made the wedge read "$250 of $20
+       budget" and look 1250% over. */
+    const target = ((budget?.plan_savings ?? 0) / 100) * (budget?.income ?? 0);
+    return { actual, budget: target, avg3: avg / 3, breakdown, txns };
   }, [transactions, accounts, savingsIds, month, budget]);
 
   /* ---- petals: actual spend + dimmed upcoming commitments ---- */

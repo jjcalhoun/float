@@ -102,13 +102,28 @@ export interface LedgerOptions {
  *
  *  A transfer is two rows — money leaving one account and arriving at another
  *  — and only one of them carries the link to the plan. Both describe one
- *  payment, so both have to resolve to the same key. */
+ *  payment, so both have to resolve to the same key.
+ *
+ *  Deliberately DATELESS. Keying on the date too was the weak point of this:
+ *  a feed that posts the legs a day apart — money leaves on the 2nd, lands on
+ *  the 3rd — produced two keys, the pair went unrecognised, and the payment
+ *  was charged to the month twice again. The date is compared separately,
+ *  with room to move. */
 const transferKey = (t: Transaction): string => {
   const a = t.account_id;
   const b = t.transfer_account_id ?? "";
   const [x, y] = a < b ? [a, b] : [b, a];
-  return `${x}|${y}|${Math.abs(t.amount).toFixed(2)}|${t.date}`;
+  return `${x}|${y}|${Math.abs(t.amount).toFixed(2)}`;
 };
+
+/** How far apart the two legs of one transfer may post and still be one
+ *  payment. Wide enough for a weekend, narrow enough that two genuinely
+ *  separate transfers of the same amount between the same accounts — a
+ *  standing weekly payment, say — are not mistaken for each other. */
+const PAIR_DAYS = 4;
+
+const daysBetween = (a: string, b: string) =>
+  Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86400000;
 
 /** Signed actual from linked transactions. A two-sided transfer may have either
  *  or both legs linked; prefer the outflow legs so a pair isn't double-counted. */
@@ -153,12 +168,24 @@ export function ledger(
    *
    * Both legs share a key, so the arriving leg can recognise that its own
    * payment has already been counted. */
-  const settledTransfers = new Set<string>();
+  const settledTransfers = new Map<string, string[]>();
   for (const t of transactions) {
-    if (t.type !== "transfer") continue;
-    if (!t.commitment_id || !ids.has(t.commitment_id)) continue;
-    settledTransfers.add(transferKey(t));
+    if (t.type !== "transfer" || !t.commitment_id) continue;
+    // ANY period's commitment, not just this one. A payment linked to August's
+    // line whose arriving leg lands in September was counted by August as its
+    // commitment AND by September as cash committed — the same money charged
+    // to two months.
+    const key = transferKey(t);
+    const dates = settledTransfers.get(key);
+    if (dates) dates.push(t.date);
+    else settledTransfers.set(key, [t.date]);
   }
+
+  /** Is this unlinked leg the other half of a payment the plan already counted? */
+  const alreadySettled = (t: Transaction): boolean =>
+    (settledTransfers.get(transferKey(t)) ?? []).some(
+      (d) => daysBetween(d, t.date) <= PAIR_DAYS,
+    );
 
   let expectedIncome = 0;
   let commitmentsPlanned = 0;
@@ -216,7 +243,7 @@ export function ledger(
       // leaving, whatever was bought this month.
       // ...unless the plan already counted it: this is the other half of a
       // payment linked to a commitment, not a second payment.
-      if (settledTransfers.has(transferKey(t))) continue;
+      if (alreadySettled(t)) continue;
       if (
         t.amount > 0 &&
         (ctx.loanAccountIds.has(t.account_id) ||
