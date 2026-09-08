@@ -31,6 +31,17 @@ export interface PaymentTerms {
  *     of the payment but never touches the principal, so it comes off the top.
  *
  *  Falls back to the minimum, then to a 2%-of-balance estimate. */
+/** What actually leaves the account each month, escrow included.
+ *
+ *  debtPayment() is the PAYDOWN — what reaches the principal — which is the
+ *  right number for a payoff projection and the wrong one for a chart of
+ *  money spent. The donut's Debt wedge measures gross payments made, so its
+ *  target has to be gross too; comparing a $583.57 payment against a $352.66
+ *  paydown made every month look overspent. */
+export function grossPayment(terms: PaymentTerms, balance: number): number {
+  return terms.monthly_payment ?? terms.min_payment ?? minPayment(balance);
+}
+
 export function debtPayment(terms: PaymentTerms, balance: number): number {
   const gross = terms.monthly_payment ?? terms.min_payment ?? minPayment(balance);
   const escrow = terms.escrow_amount ?? 0;

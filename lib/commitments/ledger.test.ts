@@ -300,3 +300,73 @@ describe("a transfer pair settling a commitment", () => {
     expect(led.freeToSpend).toBeCloseTo(3416.43);
   });
 });
+
+/* The two ways the pair guard used to miss. Both charge one payment to the
+   month twice, silently, in free-to-spend. */
+describe("pairing a transfer across dates and months", () => {
+  const ctx2: LedgerContext = {
+    creditAccountIds: new Set(["card"]),
+    loanAccountIds: new Set(["mortgage"]),
+    savingsAccountIds: new Set(["save"]),
+  };
+
+  const leg = (over: Partial<Transaction>) =>
+    ({
+      id: "x", user_id: "u", account_id: "chk", transfer_account_id: "mortgage",
+      date: "2026-09-02", amount: -583.57, type: "transfer", source: "sync",
+      reviewed: true, created_at: "", updated_at: "", ...over,
+    }) as Transaction;
+
+  const line = (over: Partial<Commitment>) =>
+    ({
+      id: "m1", user_id: "u", series_id: "mortgage", period: "2026-09", seq: 0,
+      name: "Mortgage", kind: "debt", amount: -583.57, interval: 1,
+      frequency: "monthly", series_ended: false, skipped: false, variable: false,
+      auto_confirm: false, covered_by: null, account_id: "chk",
+      created_at: "", updated_at: "", ...over,
+    }) as Commitment;
+
+  it("pairs legs that posted a day apart", () => {
+    // the key used to include the date, so this read as two payments
+    const led = ledger(
+      [line({})],
+      [
+        leg({ id: "out", commitment_id: "m1", date: "2026-09-02" }),
+        leg({ id: "in", account_id: "mortgage", transfer_account_id: "chk", amount: 583.57, date: "2026-09-03" }),
+      ],
+      "2026-09",
+      ctx2,
+    );
+    expect(led.discretionary).toBe(0);
+    expect(led.commitmentsEffective).toBeCloseTo(583.57);
+  });
+
+  it("does not pair legs weeks apart — those are two payments", () => {
+    const led = ledger(
+      [line({})],
+      [
+        leg({ id: "out", commitment_id: "m1", date: "2026-09-02" }),
+        leg({ id: "in", account_id: "mortgage", transfer_account_id: "chk", amount: 583.57, date: "2026-09-25" }),
+      ],
+      "2026-09",
+      ctx2,
+    );
+    expect(led.discretionary).toBeCloseTo(583.57);
+  });
+
+  it("recognises a leg linked to ANOTHER month's line", () => {
+    /* August's payment, arriving in September. August counts it as its
+       commitment; September used to count the arrival as cash committed, so
+       the same money was charged to two months. */
+    const led = ledger(
+      [],
+      [
+        leg({ id: "out", commitment_id: "aug", date: "2026-08-31" }),
+        leg({ id: "in", account_id: "mortgage", transfer_account_id: "chk", amount: 583.57, date: "2026-09-01" }),
+      ],
+      "2026-09",
+      ctx2,
+    );
+    expect(led.discretionary).toBe(0);
+  });
+});

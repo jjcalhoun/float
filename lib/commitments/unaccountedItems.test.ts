@@ -275,3 +275,32 @@ describe("a payment shown under a category", () => {
     expect(rows).toEqual([]);
   });
 });
+
+describe("a commitment settled by the arriving leg alone", () => {
+  it("counts it, rather than dropping it and drifting from the ledger", () => {
+    /* linkedActual falls back to whatever legs exist, so the ledger counts a
+       commitment linked only to its arriving leg. This used to return zero for
+       a positive amount, so the ledger counted it and the sheet did not. */
+    const rows = unaccountedItems(
+      [{ id: "cc1", period: "2026-09", skipped: false, covered_by: null }] as Commitment[],
+      [t({ id: "in", account_id: "card", type: "transfer", amount: 300, transfer_account_id: "chk", commitment_id: "cc1" })],
+      "2026-09",
+      { ...ctx, creditAccountIds: new Set(["nope"]) }, // nothing in the ring shows it
+    );
+    expect(rows[0].ledger).toBe(300);
+  });
+
+  it("counts a linked PAIR once, not twice", () => {
+    const rows = unaccountedItems(
+      [{ id: "cc1", period: "2026-09", skipped: false, covered_by: null }] as Commitment[],
+      [
+        t({ id: "out", account_id: "chk", type: "transfer", amount: -300, transfer_account_id: "card", commitment_id: "cc1", date: "2026-09-20" }),
+        t({ id: "in", account_id: "card", type: "transfer", amount: 300, transfer_account_id: "chk", commitment_id: "cc1", date: "2026-09-21" }),
+      ],
+      "2026-09",
+      { ...ctx, creditAccountIds: new Set(["nope"]) },
+      { paymentCategoryByAccount: {} },
+    );
+    expect(rows.reduce((s, r) => s + r.ledger, 0)).toBe(300);
+  });
+});

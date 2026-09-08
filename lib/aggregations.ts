@@ -33,6 +33,12 @@ export interface RollupOptions {
   /** account_id → category_id: show this account's whole payment under that
    *  category instead of as a separate debt line. */
   paymentCategoryByAccount?: Record<string, string>;
+  /** credit-card accounts, so this can follow the same rule as the ledger */
+  creditAccountIds?: Set<string>;
+  /** SPEND view: card purchases count as they post. Matches LedgerOptions.
+   *  Without it this counted purchases in BOTH views while the ledger counted
+   *  them in one, so the chart showed spending free-to-spend did not. */
+  countCardPurchases?: boolean;
 }
 
 export function rollup(
@@ -61,6 +67,8 @@ export function rollup(
    * counts both when a balance is carried — so the payment gets its category
    * and the purchases keep theirs. */
   const payTo = opts.paymentCategoryByAccount ?? {};
+  const creditIds = opts.creditAccountIds ?? new Set<string>();
+  const spendView = opts.countCardPurchases ?? false;
   const byCat: Record<string, number> = {};
   const byBucket: Record<BucketType, number> = { needs: 0, wants: 0, savings: 0 };
   let income = 0;
@@ -82,19 +90,22 @@ export function rollup(
       if (savingsAccountIds.has(txn.account_id)) {
         byBucket.savings += txn.amount;
         spend += txn.amount;
-      } else if (payTo[txn.account_id] && txn.amount > 0 && !loanAccountIds.has(txn.account_id)) {
-        // A card payment named a category. Cards are otherwise skipped here —
-        // the purchases already counted — but that left a paid card payment
-        // with no slice at all while the ledger counted it as cash leaving.
-        const cat = payTo[txn.account_id];
-        byCat[cat] = (byCat[cat] ?? 0) + txn.amount;
-        byBucket.needs += txn.amount;
-        spend += txn.amount;
-      } else if (loanAccountIds.has(txn.account_id)) {
-        // Paying down a loan/HELOC is real money committed — the borrowing was
-        // never expensed — so it reduces net available. Filed under needs (a
-        // debt obligation). Credit cards are excluded: their purchases already
-        // counted, so counting the payment too would double-count.
+      } else if (
+        txn.amount > 0 &&
+        (loanAccountIds.has(txn.account_id) || creditIds.has(txn.account_id))
+      ) {
+        /* Money landing in a loan or a card is real money committed — the
+         * borrowing was never expensed — so it reduces net available. Filed
+         * under needs: a debt obligation.
+         *
+         * Cards used to be skipped here on the grounds that their purchases
+         * already counted. That is only true in the CASH view, and this
+         * function had no idea which view was on; meanwhile the ledger counts
+         * a card payment in both. The result was a card payment inside the
+         * donut's Debt wedge but absent from "Spending by bucket" — two cards
+         * on one screen disagreeing. Both count it now, in both views, and
+         * the toggle governs the PURCHASES instead, exactly as it does in the
+         * ledger. */
         const cat = payTo[txn.account_id];
         if (cat) byCat[cat] = (byCat[cat] ?? 0) + txn.amount;
         byBucket.needs += txn.amount;
@@ -107,6 +118,11 @@ export function rollup(
     // that payment; counting their splits again would double-charge it. A
     // card's purchases are not inside its payment, so they stay.
     if (loanAccountIds.has(txn.account_id) && payTo[txn.account_id]) continue;
+
+    // In the CASH view a card purchase is not spending yet — the payment that
+    // settles it is. The ledger has always worked this way; this did not, so
+    // with the toggle off the chart showed spending free-to-spend did not.
+    if (!spendView && creditIds.has(txn.account_id)) continue;
 
     // expense + refund: aggregate via splits
     for (const split of txn.splits ?? []) {
