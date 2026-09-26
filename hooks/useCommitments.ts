@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import type { Commitment } from "@/lib/commitments/types";
@@ -88,6 +89,36 @@ export function useEnsurePeriod() {
       qc.invalidateQueries({ queryKey: ["commitments_window"] });
     },
   });
+}
+
+/** Draft any period in the window that has no lines yet, so the picker can
+ *  offer them.
+ *
+ *  A month's lines were only ever created by opening the Month plan sheet for
+ *  that month (MonthPlanSheet calls useEnsurePeriod on mount). The picker asks
+ *  for a three-month window, so the month either side was routinely empty —
+ *  and a fortnightly payment that lands on the 1st, settling a week that falls
+ *  in the next month, had nothing to select. There was no error; the chip
+ *  simply wasn't there.
+ *
+ *  Only the current period and later are drafted. Cloning a series into a PAST
+ *  month would invent history that never happened. */
+export function useEnsureWindow(periods: string[], currentPeriod: string) {
+  const ensure = useEnsurePeriod();
+  const { data: existing } = useCommitmentWindow(periods);
+  // One attempt per period per mount: the mutation is idempotent, but a retry
+  // loop on a period whose series are all ended would be pointless traffic.
+  const tried = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!existing) return;
+    const has = new Set(existing.map((c) => c.period));
+    for (const p of periods) {
+      if (p < currentPeriod || has.has(p) || tried.current.has(p)) continue;
+      tried.current.add(p);
+      ensure.mutate(p);
+    }
+  }, [existing, periods, currentPeriod, ensure]);
 }
 
 /** Link (or unlink) a transaction to the commitment it fulfills. */

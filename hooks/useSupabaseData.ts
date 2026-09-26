@@ -219,6 +219,23 @@ export interface TransactionUpdate {
   splits?: SplitInput[]; // replaces the existing splits
 }
 
+/** Mark a deposit as NOT from the plan, so the unmatched-income prompt stops
+ *  asking about it. Its own mutation rather than a TransactionUpdate: that
+ *  requires the whole row, and this is one flag on a card. */
+export function useMarkPlanExempt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, exempt }: { id: string; exempt: boolean }) => {
+      const { error } = await supabase
+        .from("transactions")
+        .update({ plan_exempt: exempt })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["transactions"] }),
+  });
+}
+
 export function useUpdateTransaction() {
   const qc = useQueryClient();
   return useMutation({

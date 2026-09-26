@@ -67,6 +67,9 @@ export function findUnmatchedIncome(
 
   for (const t of transactions) {
     if (t.commitment_id) continue;
+    // Already answered: the user said this one is not from the plan. It still
+    // counts as extra income — that was always true — it just stops asking.
+    if (t.plan_exempt) continue;
     if (t.type !== "income") continue;
     if (t.date.slice(0, 7) !== period) continue;
 

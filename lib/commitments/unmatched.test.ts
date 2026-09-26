@@ -150,3 +150,23 @@ describe("what matching actually fixes", () => {
     expect(led.freeToSpend).toBeCloseTo(1845.66, 2);
   });
 });
+
+describe("a deposit the user says is not from the plan", () => {
+  /* A $500 deposit can look exactly like a $500 payday allocation and be
+     something else entirely. Match was the card's only action, so the prompt
+     came back every time the screen opened, forever, about money that was
+     never wrong. */
+  it("is not reported once marked exempt", () => {
+    const line = c({ id: "pay", name: "payday allocation", amount: 500, due_hint: "2026-08-24" });
+    const dep = t({ id: "d", amount: 500, date: "2026-08-24", merchant: "payday allocation" });
+
+    expect(findUnmatchedIncome([line], [dep], "2026-08")).toHaveLength(1);
+    expect(findUnmatchedIncome([line], [{ ...dep, plan_exempt: true }], "2026-08")).toEqual([]);
+  });
+
+  it("still counts as extra income — the flag changes no total", () => {
+    // it was always extra while unlinked; this only silences the prompt
+    const dep = t({ id: "d", amount: 500, plan_exempt: true });
+    expect(dep.commitment_id).toBeUndefined();
+  });
+});

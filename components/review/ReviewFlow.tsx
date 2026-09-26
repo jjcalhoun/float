@@ -9,7 +9,7 @@ import {
   useResolveTransfer,
 } from "@/hooks/useSupabaseData";
 import { useUpsertSeries, useSeries } from "@/hooks/useSeries";
-import { useCommitmentWindow, useLinkCommitment } from "@/hooks/useCommitments";
+import { useCommitmentWindow, useEnsureWindow, useLinkCommitment } from "@/hooks/useCommitments";
 import { rankCommitments, suggestCommitment, orderForDisplay } from "@/lib/commitments/match";
 import { periodWindow } from "@/lib/commitments/period";
 import { selectionFor } from "@/lib/commitments/restore";
@@ -23,7 +23,7 @@ import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { BUCKETS } from "@/lib/buckets";
 import { todayISO } from "@/lib/dates";
-import { fmt, shortDate } from "@/lib/format";
+import { fmt, shortDate, currentMonthKey } from "@/lib/format";
 import type { Transaction, TransactionType, BucketType, RecurringFrequency } from "@/lib/types";
 
 const REVIEW_FREQ: Record<"monthly" | "biweekly" | "weekly", string> = {
@@ -85,7 +85,11 @@ export function ReviewFlow({ onClose }: { onClose: () => void }) {
   // month — a bill due the 31st that clears on the 1st must still find the
   // month that expected it.
   const txnMonth = txn ? monthKey(txn.date) : "";
-  const { data: windowItems = [] } = useCommitmentWindow(txnMonth ? periodWindow(txnMonth) : []);
+  const windowPeriods = useMemo(() => (txnMonth ? periodWindow(txnMonth) : []), [txnMonth]);
+  // Draft next month if it has no lines yet — a fortnightly payment often
+  // settles a week that falls in it, and an undrafted month offers no chip.
+  useEnsureWindow(windowPeriods, currentMonthKey());
+  const { data: windowItems = [] } = useCommitmentWindow(windowPeriods);
   // Scored for pre-selection, but shown in DATE order — the list doubles as a
   // run-down of what's still coming, and repeats tick off in sequence.
   const candidates = useMemo(
