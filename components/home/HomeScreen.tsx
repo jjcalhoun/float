@@ -10,8 +10,9 @@ import {
   useAccountBalances,
   useSettings,
   useUpdateSettings,
+  useMarkPlanExempt,
 } from "@/hooks/useSupabaseData";
-import { useCommitments, useConfirmCommitment } from "@/hooks/useCommitments";
+import { useCommitments, useConfirmCommitment, useUpdateCommitment } from "@/hooks/useCommitments";
 import { useSimplefinMappings } from "@/hooks/useSimplefin";
 import { isAwaitingConfirmation, daysOverdue } from "@/lib/commitments/due";
 import { settlementFor } from "@/lib/commitments/restore";
@@ -184,6 +185,10 @@ export function HomeScreen() {
      unconfirmed and dragged free-to-spend down for weeks. It belongs here. */
   const { data: mappings = [] } = useSimplefinMappings();
   const confirmPaid = useConfirmCommitment(month);
+  // "Not this month" — the line stays in the series and comes back next month.
+  const skipCommitment = useUpdateCommitment(month);
+  // "Not from the plan" — the deposit is real extra income, stop asking.
+  const markExempt = useMarkPlanExempt();
   const today = todayISO();
   const awaiting = useMemo(() => {
     if (!isCurrent) return [];
@@ -555,29 +560,43 @@ export function HomeScreen() {
             </p>
           </div>
           {unmatchedIncome.map((u) => (
-            <button
-              key={u.txn.id}
-              onClick={() => setEditTxn(u.txn)}
-              className="w-full flex items-center gap-3 text-left"
-            >
-              <div className="flex-1 min-w-0">
+            <div key={u.txn.id} className="flex items-center gap-3">
+              <button onClick={() => setEditTxn(u.txn)} className="flex-1 min-w-0 text-left">
                 <p className="text-sm truncate" style={{ color: "var(--color-text)" }}>
                   {u.txn.merchant || u.txn.description}
                 </p>
                 <p className="text-xs" style={{ color: "var(--color-faint)" }}>
                   {shortDate(u.txn.date)} · expected as {u.expected.name}
                 </p>
-              </div>
+                {/* The other answer. A $500 deposit can look exactly like a
+                    $500 plan line and be something else, and Match was the
+                    only button — so the prompt returned forever on money that
+                    was never wrong. This changes no total: unlinked income
+                    already counts as extra. It stops the asking. */}
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    markExempt.mutate({ id: u.txn.id, exempt: true });
+                  }}
+                  className="text-xs underline inline-block mt-0.5"
+                  style={{ color: "var(--color-muted)" }}
+                >
+                  Not from the plan
+                </span>
+              </button>
               <span className="font-figure text-sm shrink-0" style={{ color: "var(--color-positive)" }}>
                 {fmt(u.txn.amount)}
               </span>
-              <span
+              <button
+                onClick={() => setEditTxn(u.txn)}
                 className="text-xs font-semibold px-2.5 py-1.5 rounded-md shrink-0 text-white"
                 style={{ background: "var(--color-primary)" }}
               >
                 Match
-              </span>
-            </button>
+              </button>
+            </div>
           ))}
         </Card>
       )}
@@ -599,8 +618,20 @@ export function HomeScreen() {
                 <p className="text-sm truncate" style={{ color: "var(--color-text)" }}>
                   {c.name}
                 </p>
-                <p className="text-xs" style={{ color: "var(--color-faint)" }}>
-                  {overdueLabel(daysOverdue(c.due_hint, today))}
+                <p className="text-xs flex items-center gap-2" style={{ color: "var(--color-faint)" }}>
+                  <span>{overdueLabel(daysOverdue(c.due_hint, today))}</span>
+                  {/* The way out. Skipping already silences this card —
+                      isAwaitingConfirmation ignores a skipped line — but the
+                      only control for it lived in the Month plan sheet, two
+                      taps into Profile, so from the one screen that asks the
+                      question there was no way to answer "it didn't happen". */}
+                  <button
+                    onClick={() => skipCommitment.mutate({ id: c.id, skipped: true })}
+                    className="underline"
+                    style={{ color: "var(--color-muted)" }}
+                  >
+                    Not this month
+                  </button>
                 </p>
               </div>
               <span className="font-figure text-sm shrink-0" style={{ color: "var(--color-text)" }}>

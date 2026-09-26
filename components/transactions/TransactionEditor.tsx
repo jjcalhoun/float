@@ -17,7 +17,7 @@ import { CategoryGrid } from "@/components/transactions/CategoryGrid";
 import { CommitmentPicker } from "@/components/commitments/CommitmentPicker";
 import { useUpsertSeries, useSeries } from "@/hooks/useSeries";
 import { reviewKind, seriesInputFrom } from "@/lib/commitments/series";
-import { useCommitmentWindow, useLinkCommitment } from "@/hooks/useCommitments";
+import { useCommitmentWindow, useEnsureWindow, useLinkCommitment } from "@/hooks/useCommitments";
 import { rankCommitments, suggestCommitment, orderForDisplay } from "@/lib/commitments/match";
 import { periodWindow } from "@/lib/commitments/period";
 import { commitmentTransferTarget } from "@/lib/commitments/types";
@@ -26,6 +26,7 @@ import { monthKey } from "@/lib/aggregations";
 import { SeriesEditor } from "@/components/plan/SeriesEditor";
 import { isInterestPaid } from "@/lib/interestPaid";
 import { todayISO } from "@/lib/dates";
+import { currentMonthKey } from "@/lib/format";
 import { BUCKETS } from "@/lib/buckets";
 import type { Transaction, TransactionType, BucketType, RecurringFrequency } from "@/lib/types";
 import type { Commitment } from "@/lib/commitments/types";
@@ -109,7 +110,11 @@ export function TransactionEditor({ txn, onClose, inline }: Props) {
   const txnMonth = monthKey(txn.date);
   // A window of periods, not just this transaction's month — the due date is a
   // hint, so a payment may fulfill a neighbouring month's commitment.
-  const { data: windowItems = [] } = useCommitmentWindow(periodWindow(txnMonth));
+  const windowPeriods = useMemo(() => periodWindow(txnMonth), [txnMonth]);
+  // See ReviewFlow: a month nobody has opened the plan sheet for has no lines,
+  // so its occurrences cannot be picked.
+  useEnsureWindow(windowPeriods, currentMonthKey());
+  const { data: windowItems = [] } = useCommitmentWindow(windowPeriods);
   // Scored for pre-selection, shown in date order (see orderForDisplay).
   const candidates = useMemo(
     () => orderForDisplay(rankCommitments(txn, windowItems, { linked: allTxns })),

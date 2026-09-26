@@ -69,6 +69,7 @@ export interface Transaction {
   import_batch_id?: string | null;
   reviewed: boolean;
   commitment_id?: string | null; // fulfills this commitment — the only link there is
+  plan_exempt?: boolean | null; // income confirmed as NOT from the plan; stops the prompt
   created_at: string;
   updated_at: string;
   // joined
