@@ -41,7 +41,15 @@ export function normalisePayee(raw: string | null | undefined): string {
     else break;
   }
 
-  return toks.join(" ").replace(/[*#]+$/, "").trim();
+  /* A web merchant bills under both its domain and its bare name — the same
+     Philo subscription arrives four times as "Philo.com" and once as "Philo",
+     which split a clean monthly series into a four and a one and lost it.
+     The bank's description is not stable, so the TLD comes off. */
+  return toks
+    .map((t) => t.replace(/\.(com|net|org|io|co|app|tv)$/, ""))
+    .join(" ")
+    .replace(/[*#]+$/, "")
+    .trim();
 }
 
 /** For display: the normalised form, with each word capitalised the way the

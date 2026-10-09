@@ -207,11 +207,43 @@ describe("a gap that is two periods, not chaos", () => {
     expect(found[0].confidence).toBeLessThan(0.8);
   });
 
-  /* Philo.com was also reported missing, but its real dates are not in hand
-     — only that there are four between 06-10 and 09-22 with the amount
-     moving. Inventing dates and then tuning the fit until they pass would be
-     fitting the detector to a guess, which is how you get an algorithm that
-     works beautifully on fiction. Left untested until the real rows turn up. */
+  it("finds Philo, which failed for two reasons at once", () => {
+    /* The real rows. Two separate traps:
+       - 08-22 posts as "Philo", the other four as "Philo.com". The bank's own
+         description drifts, so the series split into a four and a one.
+       - 06-10 is $3.07, a prorated first charge, which injects a twelve-day
+         gap into an otherwise perfect monthly rhythm. */
+    const ph = [
+      t("2026-06-10", -3.07, "Philo.com"),
+      t("2026-06-22", -25.0, "Philo.com"),
+      t("2026-07-22", -25.0, "Philo.com"),
+      t("2026-08-22", -25.0, "Philo"),
+      t("2026-09-22", -25.0, "Philo.com"),
+    ];
+    const found = detectSeries(ph);
+    expect(found).toHaveLength(1);
+    expect(found[0].cadence).toBe("monthly");
+    expect(found[0].amount).toBe(25);
+    expect(found[0].nextDue).toBe("2026-10-22");
+  });
+
+  it("leaves the prorated charge OUT of the obligation", () => {
+    /* Read whole, Philo is a 0.64-confidence series with a bogus gap that
+       counts $3.07 as part of a $25 subscription. The $25 cluster alone is a
+       flawless monthly. Taking the better reading is what gets both the
+       amount and the rhythm right. */
+    const ph = [
+      t("2026-06-10", -3.07, "Philo.com"),
+      t("2026-06-22", -25.0, "Philo.com"),
+      t("2026-07-22", -25.0, "Philo.com"),
+      t("2026-08-22", -25.0, "Philo"),
+      t("2026-09-22", -25.0, "Philo.com"),
+    ];
+    const s = detectSeries(ph)[0];
+    expect(s.hits).toBe(4);
+    expect(s.amountSpread).toBe(0);
+    expect(s.confidence).toBeGreaterThan(0.8);
+  });
 });
 
 describe("what the looser fit must still refuse", () => {

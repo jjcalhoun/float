@@ -74,3 +74,20 @@ describe("displayPayee", () => {
     expect(displayPayee("Sam's Club")).toBe("Sam's Club");
   });
 });
+
+describe("a merchant that bills under two names", () => {
+  it("treats Philo and Philo.com as one payee", () => {
+    // four rows as "Philo.com" and one as "Philo" split a clean monthly
+    // subscription into a four and a one, and it was lost
+    expect(normalisePayee("Philo.com")).toBe(normalisePayee("Philo"));
+  });
+
+  it("strips the usual suffixes", () => {
+    expect(normalisePayee("Link.com")).toBe("link");
+    expect(normalisePayee("Something.io")).toBe("something");
+  });
+
+  it("leaves a dot that is not a TLD alone", () => {
+    expect(normalisePayee("St. Mary's")).toBe("st. mary's");
+  });
+});
