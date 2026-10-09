@@ -260,6 +260,22 @@ function clusterByAmount(txns: Txn[], tolerance: number): Txn[][] {
   return out;
 }
 
+/* Suggesting is a different job from deciding, and wants different nerves.
+ *
+ * While the detector's output WAS the answer, every threshold had to be
+ * defensive: a false positive told you your groceries were a fixed cost. Now
+ * that nothing counts until it is ticked, a wrong suggestion costs one ignored
+ * row — so suggestions can afford to be generous, and the misses that
+ * conservatism bought us stop being worth it. Two occurrences instead of
+ * three is what finally makes a quarterly bill visible before its third year.
+ *
+ * The strict defaults stay for anything that uses detection as an answer
+ * rather than a proposal. */
+export const SUGGEST: DetectOptions = {
+  minHits: 2,
+  minFit: 0.6,
+};
+
 /** Everything that repeats, most confident first. */
 export function detectSeries(txns: Txn[], opts: DetectOptions = {}): Series[] {
   const minHits = opts.minHits ?? 3;
@@ -340,6 +356,14 @@ function buildSeries(
   const amt = median(amounts);
   const amountSpread =
     amt === 0 ? 0 : Math.sqrt(amounts.reduce((s, a) => s + (a - amt) ** 2, 0) / amounts.length) / amt;
+
+  /* Two occurrences is one gap, and one gap always "fits" something — there
+     is no regularity to measure, only a coincidence to rationalise. Sam's
+     Club duly produced obligations out of pairs of unrelated shopping trips.
+     So a pair has to earn it another way: the amounts must be identical, and
+     the single gap must be exactly one period rather than a multiple, since
+     you cannot infer a skip from one observation. */
+  if (dates.length < 3 && (amountSpread > 0.001 || f.onTime < 1)) return null;
 
   return {
     key: `${key}|${direction}|${amt.toFixed(2)}`,
