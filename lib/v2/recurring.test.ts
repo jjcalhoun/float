@@ -299,3 +299,38 @@ describe("suggesting is not deciding", () => {
     expect(detectSeries(sams, SUGGEST)).toEqual([]);
   });
 });
+
+describe("the same bill under two bank descriptions", () => {
+  it("becomes one series, not two thin ones", () => {
+    /* Smithville internet, as Chase actually sends it: three rows under one
+       name and two under an ACH-prefixed one. Split, each half is a weak
+       series — and the list offered the same bill twice, so it was kept and
+       dismissed at the same time. */
+    const split = [
+      t("2026-06-05", -74.99, "Smithville Tele Bill"),
+      t("2026-07-05", -74.99, "Certificate of Origin Smithville"),
+      t("2026-08-05", -74.99, "Certificate of Origin Smithville"),
+      t("2026-09-05", -74.99, "Smithville Tele Bill"),
+      t("2026-10-05", -74.99, "Smithville Tele Bill"),
+    ];
+    const found = detectSeries(split);
+    expect(found).toHaveLength(1);
+    expect(found[0].hits).toBe(5);
+    expect(found[0].cadence).toBe("monthly");
+    expect(found[0].nextDue).toBe("2026-11-05");
+    // five clean occurrences read far better than three and two
+    expect(found[0].confidence).toBeGreaterThan(0.9);
+  });
+
+  it("does not merge two different bills that happen to cost the same", () => {
+    const same = [
+      t("2026-06-10", -9.99, "Netflix"),
+      t("2026-07-10", -9.99, "Netflix"),
+      t("2026-08-10", -9.99, "Netflix"),
+      t("2026-06-20", -9.99, "Spotify"),
+      t("2026-07-20", -9.99, "Spotify"),
+      t("2026-08-20", -9.99, "Spotify"),
+    ];
+    expect(detectSeries(same)).toHaveLength(2);
+  });
+});

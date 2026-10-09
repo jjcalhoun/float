@@ -1,4 +1,4 @@
-import { normalisePayee, displayPayee } from "./payee";
+import { normalisePayee, displayPayee, aliasMap } from "./payee";
 
 /* Finding what repeats, from what already happened.
  *
@@ -290,6 +290,22 @@ export function detectSeries(txns: Txn[], opts: DetectOptions = {}): Series[] {
     const arr = byPayee.get(key);
     if (arr) arr.push(t);
     else byPayee.set(key, [t]);
+  }
+
+  /* One bill posted under two names is one bill. Chase prefixes some ACH
+     debits with their originator, so Smithville and the mortgage each arrived
+     as two payees — each half a thin series, and each asking to be judged
+     separately, which is how one bill ended up kept AND dismissed. */
+  const aliases = aliasMap(
+    [...byPayee].map(([key, ts]) => ({
+      key,
+      amount: median(ts.map((t) => Math.abs(t.amount))),
+    })),
+  );
+  for (const [from, to] of aliases) {
+    const merged = [...(byPayee.get(to) ?? []), ...(byPayee.get(from) ?? [])];
+    byPayee.set(to, merged);
+    byPayee.delete(from);
   }
 
   const out: Series[] = [];

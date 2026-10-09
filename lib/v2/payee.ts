@@ -60,3 +60,76 @@ export function displayPayee(raw: string | null | undefined): string {
   const words = raw.trim().split(/\s+/).slice(0, norm.split(" ").length);
   return words.join(" ");
 }
+
+/* One bill, two names.
+ *
+ * Chase posts some ACH debits with an originator prefix, so the same
+ * Smithville internet bill arrives as both:
+ *
+ *   Smithville Tele Bill
+ *   Certificate of Origin Smithville
+ *
+ * and the same mortgage as both "Citizens Bank Mortgage Payment" and
+ * "Certificate of Origin Citizens". Each half then looks like a thin,
+ * low-confidence series instead of one solid one — and worse, you are asked
+ * to judge the same obligation twice, which is how a bill ends up both kept
+ * and dismissed at once.
+ *
+ * Stripping the prefix is not enough: that leaves "smithville" against
+ * "smithville tele bill", still two keys. So names are merged when one is a
+ * token-subset of the other AND the amounts agree. Both conditions matter —
+ * the subset alone would merge "Target" into "Target Optical", and the
+ * amounts alone would merge every $9.99 subscription you own.
+ */
+
+/** Words that identify a transaction's plumbing rather than its payee. */
+const GENERIC = new Set([
+  "certificate", "origin", "of", "payment", "bill", "ach", "autopay", "the",
+  "to", "from", "inc", "llc", "co",
+]);
+
+const distinctive = (key: string) =>
+  new Set(key.split(" ").filter((t) => t.length > 1 && !GENERIC.has(t)));
+
+const isSubset = (a: Set<string>, b: Set<string>) =>
+  a.size > 0 && a.size < b.size && [...a].every((t) => b.has(t));
+
+export interface AliasInput {
+  key: string;
+  /** typical amount at this payee, unsigned */
+  amount: number;
+}
+
+/** key → the key it should be counted under. Keys with no alias are absent.
+ *
+ *  The more specific name wins, because "Smithville Tele Bill" tells you what
+ *  the bill is and "Certificate of Origin Smithville" tells you how the bank
+ *  routed it. */
+export function aliasMap(payees: AliasInput[], amountTolerance = 0.05): Map<string, string> {
+  const toks = new Map(payees.map((p) => [p.key, distinctive(p.key)]));
+  const out = new Map<string, string>();
+
+  for (const a of payees) {
+    for (const b of payees) {
+      if (a.key === b.key) continue;
+      if (!isSubset(toks.get(a.key)!, toks.get(b.key)!)) continue;
+      const scale = Math.max(a.amount, b.amount);
+      if (scale <= 0 || Math.abs(a.amount - b.amount) / scale > amountTolerance) continue;
+      out.set(a.key, b.key);
+      break;
+    }
+  }
+
+  // a → b → c collapses to a → c, so a three-way split lands in one place.
+  for (const [from] of out) {
+    const seen = new Set([from]);
+    let to = out.get(from)!;
+    while (out.has(to) && !seen.has(to)) {
+      seen.add(to);
+      to = out.get(to)!;
+    }
+    out.set(from, to);
+  }
+
+  return out;
+}
