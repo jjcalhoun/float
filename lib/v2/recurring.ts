@@ -285,22 +285,32 @@ export function detectSeries(txns: Txn[], opts: DetectOptions = {}): Series[] {
       const side = all.filter((t) => (direction === "in" ? t.amount > 0 : t.amount < 0));
       if (side.length < minHits) continue;
 
-      // The payee as one obligation, which is the common case...
+      // The payee read as one obligation, which is the common case...
       const whole = buildSeries(key, direction, side, minHits, minFit);
-      if (whole) {
-        out.push(whole);
-        continue;
-      }
-      /* ...and only if that is irregular, look for a regular series hiding
-         inside it at ONE amount.
-         The amount has to be near-fixed. Without that, random shopping gets
-         carved into clusters that happen to be evenly spaced, and Sam's Club
-         acquires two standing obligations it never had. A genuinely variable
-         bill does not need this path — the whole-payee test above found it. */
-      for (const cluster of clusterByAmount(side, amountTolerance)) {
-        const s = buildSeries(key, direction, cluster, minHits, minFit);
-        if (s && s.amountSpread <= maxClusterSpread) out.push(s);
-      }
+
+      /* ...and the same payee read as separate obligations at separate
+         amounts. The amount has to be near-fixed for these: without that,
+         random shopping gets carved into clusters that happen to be evenly
+         spaced and Sam's Club acquires standing obligations it never had. */
+      const clustered = clusterByAmount(side, amountTolerance)
+        .map((c) => buildSeries(key, direction, c, minHits, minFit))
+        .filter((s): s is Series => !!s && s.amountSpread <= maxClusterSpread);
+
+      /* Whichever reading explains the payee better.
+         Taking the whole whenever it merely passes was wrong. Philo bills $25
+         monthly with one prorated $3.07 at the start: as a whole that is a
+         0.64-confidence series with a bogus twelve-day gap, while the $25
+         cluster alone is a flawless monthly at 0.85. Reading it whole also
+         keeps the one-off inside the obligation, which is the opposite of
+         true. Duke Energy goes the other way — its amounts vary so no cluster
+         survives, and the whole is the only honest reading. */
+      const bestCluster = clustered.reduce<Series | null>(
+        (b, s) => (!b || s.confidence > b.confidence ? s : b),
+        null,
+      );
+
+      if (whole && (!bestCluster || whole.confidence >= bestCluster.confidence)) out.push(whole);
+      else out.push(...clustered);
     }
   }
 
