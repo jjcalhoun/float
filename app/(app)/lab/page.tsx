@@ -1,20 +1,23 @@
 "use client";
 
-/* A dry run of the v2 detector against real data. Reads only.
+/* Which merchants are fixed costs — the list screen 1 will draw its outflows
+ * from.
  *
- * Not a feature, and not linked from anywhere. The point of v2 is that the
- * recurrence detector replaces the hand-curated plan, so the only question
- * worth answering before building any of it is whether the detector actually
- * describes this account. This page answers that and nothing else: everything
- * it found, what it rejected, and why.
+ * The detector proposes and you decide. Nothing here is a fixed cost until
+ * you tick it, which is what keeps three tidy grocery runs out of your
+ * obligations and lets the suggestions be generous: an untouched row costs
+ * nothing, so it can afford to be only half sure.
  *
- * Delete it once the question is settled.
+ * Amounts and cadences stay inferred. You are classifying merchants, never
+ * typing figures — so when child support moves from $412 fortnightly to $231
+ * weekly, the tick stays put and the numbers follow on their own.
  */
 
 import { useMemo, useState } from "react";
 import { useTransactions, useAccounts } from "@/hooks/useSupabaseData";
+import { useRecurringPayees, useSetRecurringPayee } from "@/hooks/useRecurringPayees";
 import { useTxnWindow } from "@/components/providers";
-import { detectSeries, isStale, type Txn } from "@/lib/v2/recurring";
+import { detectSeries, isStale, SUGGEST, type Series, type Txn } from "@/lib/v2/recurring";
 import { normalisePayee, displayPayee } from "@/lib/v2/payee";
 import { fmt, fmt0, shortDate } from "@/lib/format";
 import { todayISO } from "@/lib/dates";
@@ -29,47 +32,49 @@ const CADENCE_LABEL: Record<string, string> = {
   annual: "yearly",
 };
 
-export default function DetectorLab() {
+export default function RecurringLab() {
   const { data: transactions = [], isLoading } = useTransactions();
   const { data: accounts = [] } = useAccounts();
+  const { data: decisions = {} } = useRecurringPayees();
+  const setDecision = useSetRecurringPayee();
   const { ensureSince } = useTxnWindow();
-  const [months, setMonths] = useState(12);
+  const [showDismissed, setShowDismissed] = useState(false);
   const today = todayISO();
 
-  // The detector wants as much history as it can get.
   useMemo(() => {
     const since = new Date();
-    since.setMonth(since.getMonth() - months);
+    since.setMonth(since.getMonth() - 24);
     ensureSince(since.toISOString().slice(0, 10));
-  }, [months, ensureSince]);
+  }, [ensureSince]);
 
-  /* Checking only, which is what screen 1 will look at.
-   *
-   * Scope is not cosmetic here. Run the detector across every account and a
-   * transfer shows up twice — once leaving checking, once arriving at savings
-   * or the card — so "Savings auto-transfer" appears as both a $250 outflow
-   * and a $250 income. Nothing is wrong with the detection; both legs are
-   * real. Looking at one account is what makes a transfer one event. */
   const spending = useMemo(
     () => new Set(accounts.filter((a) => a.type === "checking").map((a) => a.id)),
+    [accounts],
+  );
+  const creditIds = useMemo(
+    () => new Set(accounts.filter((a) => a.type === "credit").map((a) => a.id)),
     [accounts],
   );
 
   const scoped: Txn[] = useMemo(
     () =>
       transactions
-        /* Only what the bank actually sent.
-           "payday allocation to IUCU checking" turned up as detected income,
-           and it is not a deposit at all — it is a row v1 wrote for itself.
-           ADP splits the pay at source, so the money never passes through
-           this account. v2 is built on what SimpleFIN sees, and anything the
-           old app invented has to stay out of it or the detector learns from
-           its predecessor's bookkeeping instead of from the bank. */
-        .filter((t) => t.source === "sync")
-        // Transfers are kept deliberately: the card payment and the standing
-        // transfer to savings both leave checking every month, so they are
-        // exactly the kind of recurring outflow the horizon needs to know.
+        /* Not what the app wrote for itself.
+           The IUCU payday allocation showed up as detected income, and it is
+           not a deposit — ADP splits the pay at source, so that money never
+           touches this account. It is a row v1 generated.
+           A blacklist of generated sources rather than a whitelist of 'sync':
+           manual and imported rows are real money the user put in, and
+           excluding them would quietly blind the detector to anything not on
+           the feed. If something generated still slips through, it is one
+           "Not a bill" tap away — which is rather the point of the list. */
+        .filter((t) => !["recurring", "escrow", "interest"].includes(t.source))
         .filter((t) => spending.size === 0 || spending.has(t.account_id))
+        /* A card payment is regular money that is already answered: screen 1
+           shows the balance and takes the payment you intend to make. Offering
+           "Chase Credit Card, monthly, $658" as a fixed cost would be a second
+           and worse answer to a settled question, so it is never suggested. */
+        .filter((t) => !(t.transfer_account_id && creditIds.has(t.transfer_account_id)))
         .map((t) => ({
           id: t.id,
           date: t.date,
@@ -77,125 +82,119 @@ export default function DetectorLab() {
           merchant: t.merchant,
           description: t.description,
         })),
-    [transactions, spending],
+    [transactions, spending, creditIds],
   );
 
-  const series = useMemo(() => detectSeries(scoped), [scoped]);
-  const live = series.filter((s) => !isStale(s, today));
-  const stale = series.filter((s) => isStale(s, today));
+  const series = useMemo(() => detectSeries(scoped, SUGGEST), [scoped]);
 
-  /* What it did NOT claim: payees with enough hits to look recurring that the
-     cadence test threw out. This is where false negatives hide.
-     Payees that DID yield a series are marked, because otherwise the list
-     lies: the ad-hoc $20 and $74 Zelles to the same person legitimately go
-     unclaimed even when the $412 fortnightly series was found perfectly, and
-     seeing the payee here reads as a miss when nothing was missed. */
-  const rejected = useMemo(() => {
-    const claimed = new Set(series.flatMap((s) => s.txnIds));
-    const payeesWithSeries = new Set(
-      series.map((s) => normalisePayee(s.payee)),
-    );
-    const by = new Map<string, { hits: number; total: number; label: string; partial: boolean }>();
-    for (const t of scoped) {
-      if (claimed.has(t.id) || t.amount >= 0) continue;
-      const k = normalisePayee(t.merchant || t.description);
-      if (!k) continue;
-      const e =
-        by.get(k) ??
-        { hits: 0, total: 0, label: displayPayee(t.merchant || t.description), partial: payeesWithSeries.has(k) };
-      e.hits++;
-      e.total += Math.abs(t.amount);
-      by.set(k, e);
+  const { fixed, suggested, dismissed } = useMemo(() => {
+    const fixed: Series[] = [];
+    const suggested: Series[] = [];
+    const dismissed: Series[] = [];
+    for (const s of series) {
+      const d = decisions[normalisePayee(s.payee)]?.decision;
+      if (d === "fixed") fixed.push(s);
+      else if (d === "dismissed") dismissed.push(s);
+      else if (!isStale(s, today)) suggested.push(s);
     }
-    return [...by.values()].filter((e) => e.hits >= 3).sort((a, b) => b.total - a.total);
-  }, [scoped, series]);
+    return { fixed, suggested, dismissed };
+  }, [series, decisions, today]);
 
-  const monthlyFixed = live
+  const monthly = fixed
     .filter((s) => s.direction === "out")
     .reduce((sum, s) => sum + (s.amount * 365.25) / 12 / s.periodDays, 0);
+
+  const decide = (s: Series, decision: "fixed" | "dismissed" | null) =>
+    setDecision.mutate({
+      payee_key: normalisePayee(s.payee),
+      decision,
+      noted_amount: s.amount,
+      noted_cadence: s.cadence,
+    });
 
   return (
     <main className="p-4 space-y-5 pb-24">
       <div>
         <h1 className="font-figure text-xl font-bold" style={{ color: "var(--color-text)" }}>
-          Detector dry run
+          Recurring
         </h1>
         <p className="text-xs mt-1" style={{ color: "var(--color-muted)" }}>
-          Checking accounts only — the scope screen 1 will use. Reads only;
-          nothing is saved and v1 is untouched.
+          Suggestions come from your Chase history. Nothing counts as a fixed
+          cost until you keep it.
         </p>
-        <div className="flex gap-2 mt-3">
-          {[6, 12, 24].map((m) => (
-            <button
-              key={m}
-              onClick={() => setMonths(m)}
-              className="text-xs px-3 py-1.5 rounded-lg border"
-              style={{
-                borderColor: months === m ? "var(--color-primary)" : "var(--color-hairline)",
-                color: months === m ? "var(--color-primary)" : "var(--color-muted)",
-              }}
-            >
-              {m} months
-            </button>
-          ))}
-        </div>
       </div>
 
       {isLoading && (
         <p className="text-sm" style={{ color: "var(--color-faint)" }}>
-          Loading {scoped.length} transactions…
+          Reading history…
         </p>
       )}
 
       <Card className="p-4">
-        <p className="text-sm" style={{ color: "var(--color-muted)" }}>
-          From {scoped.length} transactions it found{" "}
-          <span style={{ color: "var(--color-text)" }}>{live.length} live series</span>
-          {stale.length > 0 && <> and {stale.length} that look retired</>}.
-        </p>
-        <p className="font-figure text-2xl font-bold mt-2" style={{ color: "var(--color-text)" }}>
-          {fmt0(monthlyFixed)}
+        <p className="font-figure text-2xl font-bold" style={{ color: "var(--color-text)" }}>
+          {fmt0(monthly)}
           <span className="text-sm font-normal" style={{ color: "var(--color-muted)" }}>
             {" "}/ month in fixed costs
           </span>
         </p>
+        <p className="text-xs mt-1" style={{ color: "var(--color-faint)" }}>
+          from {fixed.length} merchant{fixed.length === 1 ? "" : "s"}{" "}
+          you&apos;ve kept
+        </p>
       </Card>
 
-      <Section title="Found" subtitle="what the detector would treat as recurring">
-        {live.map((s) => (
-          <Row key={s.key} s={s} />
-        ))}
-      </Section>
-
-      {stale.length > 0 && (
-        <Section title="Looks retired" subtitle="overdue by more than a cycle — these fade out on their own">
-          {stale.map((s) => (
-            <Row key={s.key} s={s} stale />
+      {fixed.length > 0 && (
+        <Group title="Fixed costs" subtitle="these are what screen 1 will count">
+          {fixed.map((s) => (
+            <Row key={s.key} s={s} action="remove" onAct={() => decide(s, null)} />
           ))}
-        </Section>
+        </Group>
       )}
 
-      <Section
-        title="Not claimed"
-        subtitle="3+ outflows at one payee with no series. &quot;leftovers&quot; means a series WAS found at that payee and these are the one-offs around it"
+      <Group
+        title={`Suggestions${suggested.length ? ` (${suggested.length})` : ""}`}
+        subtitle="found in your history — keep the real obligations, dismiss the rest"
       >
-        {rejected.map((r) => (
-          <div key={r.label} className="flex items-center justify-between px-3 py-2">
-            <span className="text-sm truncate" style={{ color: "var(--color-text)" }}>
-              {r.label}
-            </span>
-            <span className="text-xs shrink-0" style={{ color: "var(--color-faint)" }}>
-              {r.partial && <span style={{ color: "var(--color-primary)" }}>leftovers · </span>}
-              {r.hits}× · {fmt0(r.total)}
-            </span>
-          </div>
-        ))}
-      </Section>
+        {suggested.length === 0 ? (
+          <p className="px-3 py-4 text-sm" style={{ color: "var(--color-faint)" }}>
+            Nothing new.
+          </p>
+        ) : (
+          suggested.map((s) => (
+            <Row
+              key={s.key}
+              s={s}
+              action="keep"
+              onAct={() => decide(s, "fixed")}
+              onDismiss={() => decide(s, "dismissed")}
+            />
+          ))
+        )}
+      </Group>
+
+      {dismissed.length > 0 && (
+        <div>
+          <button
+            onClick={() => setShowDismissed((v) => !v)}
+            className="text-xs font-semibold"
+            style={{ color: "var(--color-muted)" }}
+          >
+            {showDismissed ? "Hide" : "Show"} {dismissed.length} dismissed
+          </button>
+          {showDismissed && (
+            <Card className="divide-y mt-2" style={{ borderColor: "var(--color-hairline)" }}>
+              {dismissed.map((s) => (
+                <Row key={s.key} s={s} action="undo" onAct={() => decide(s, null)} dim />
+              ))}
+            </Card>
+          )}
+        </div>
+      )}
     </main>
   );
 }
 
-function Section({
+function Group({
   title,
   subtitle,
   children,
@@ -221,30 +220,60 @@ function Section({
   );
 }
 
-function Row({ s, stale }: { s: ReturnType<typeof detectSeries>[number]; stale?: boolean }) {
+function Row({
+  s,
+  action,
+  onAct,
+  onDismiss,
+  dim,
+}: {
+  s: Series;
+  action: "keep" | "remove" | "undo";
+  onAct: () => void;
+  onDismiss?: () => void;
+  dim?: boolean;
+}) {
+  const label = action === "keep" ? "Keep" : action === "remove" ? "Remove" : "Undo";
   return (
-    <div className="px-3 py-2.5" style={{ opacity: stale ? 0.5 : 1 }}>
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm truncate" style={{ color: "var(--color-text)" }}>
-          {s.payee}
-        </span>
-        <span
-          className="font-figure text-sm shrink-0"
-          style={{ color: s.direction === "in" ? "var(--color-positive)" : "var(--color-text)" }}
-        >
-          {s.direction === "in" ? "+" : ""}
-          {fmt(s.amount)}
-        </span>
-      </div>
-      <div className="flex items-center justify-between gap-3 mt-0.5">
-        <span className="text-xs" style={{ color: "var(--color-faint)" }}>
+    <div className="px-3 py-2.5 flex items-center gap-3" style={{ opacity: dim ? 0.5 : 1 }}>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2">
+          <span className="text-sm truncate" style={{ color: "var(--color-text)" }}>
+            {s.payee}
+          </span>
+          <span
+            className="font-figure text-sm shrink-0"
+            style={{ color: s.direction === "in" ? "var(--color-positive)" : "var(--color-text)" }}
+          >
+            {s.direction === "in" ? "+" : ""}
+            {fmt(s.amount)}
+          </span>
+        </div>
+        <p className="text-xs" style={{ color: "var(--color-faint)" }}>
           {CADENCE_LABEL[s.cadence]} · {s.hits}× · next {shortDate(s.nextDue)}
           {s.amountSpread > 0.08 && <> · varies ±{Math.round(s.amountSpread * 100)}%</>}
-        </span>
-        <span className="text-xs shrink-0" style={{ color: "var(--color-faint)" }}>
-          {Math.round(s.confidence * 100)}%
-        </span>
+        </p>
       </div>
+      {onDismiss && (
+        <button
+          onClick={onDismiss}
+          className="text-xs shrink-0 underline"
+          style={{ color: "var(--color-muted)" }}
+        >
+          Not a bill
+        </button>
+      )}
+      <button
+        onClick={onAct}
+        className="text-xs font-semibold px-2.5 py-1.5 rounded-md shrink-0"
+        style={
+          action === "keep"
+            ? { background: "var(--color-primary)", color: "#fff" }
+            : { color: "var(--color-muted)" }
+        }
+      >
+        {label}
+      </button>
     </div>
   );
 }

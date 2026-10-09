@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectSeries, isStale, dueBetween, type Txn } from "./recurring";
+import { detectSeries, isStale, dueBetween, SUGGEST, type Txn } from "./recurring";
 
 /* These fixtures are real: dates and amounts lifted from the Chase feed. The
    detector is the whole bet of v2, so the cases that decide it are the ones
@@ -265,5 +265,37 @@ describe("what the looser fit must still refuse", () => {
       t("2026-09-02", -60, "Random Shop"),
     ];
     expect(detectSeries(junk)).toEqual([]);
+  });
+});
+
+describe("suggesting is not deciding", () => {
+  it("needs only two occurrences, which is what makes quarterly visible", () => {
+    /* At three occurrences a quarterly bill takes nine months to appear and an
+       annual one takes three years. That was the price of the detector's
+       output BEING the answer. Once nothing counts until it is ticked, a
+       wrong suggestion costs one ignored row, so the price stops being worth
+       paying. */
+    const quarterly = [
+      t("2026-01-15", -340, "State Farm"),
+      t("2026-04-15", -340, "State Farm"),
+    ];
+    expect(detectSeries(quarterly)).toEqual([]);
+    const suggested = detectSeries(quarterly, SUGGEST);
+    expect(suggested).toHaveLength(1);
+    expect(suggested[0].cadence).toBe("quarterly");
+  });
+
+  it("is still not so generous that shopping becomes an obligation", () => {
+    // the tick is the backstop, but a suggestion list full of groceries is
+    // useless, so the cadence test still has to hold
+    const sams: Txn[] = [];
+    const gaps = [1, 3, 2, 5, 1, 2, 4, 2, 1, 7, 2, 3];
+    const amts = [31, 184, 62, 27, 155, 44, 98, 71, 22, 140, 56, 203];
+    let d = "2026-06-01";
+    gaps.forEach((g, i) => {
+      sams.push(t(d, -amts[i], "Sam's Club"));
+      d = new Date(Date.parse(`${d}T00:00:00Z`) + g * 86400000).toISOString().slice(0, 10);
+    });
+    expect(detectSeries(sams, SUGGEST)).toEqual([]);
   });
 });
