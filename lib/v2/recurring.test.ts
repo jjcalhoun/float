@@ -44,7 +44,7 @@ describe("the case the whole design rests on", () => {
 
     expect(cs).toBeDefined();
     expect(cs!.cadence).toBe("biweekly");
-    expect(cs!.medianGap).toBe(14);
+    expect(cs!.periodDays).toBe(14);
     expect(cs!.hits).toBe(9);
     expect(cs!.lastSeen).toBe("2026-09-25");
     expect(cs!.nextDue).toBe("2026-10-09");
@@ -133,7 +133,7 @@ describe("the clean ones", () => {
     ];
     const found = detectSeries(adp);
     expect(found[0].direction).toBe("in");
-    expect(found[0].medianGap).toBeGreaterThanOrEqual(15);
+    expect(found[0].periodDays).toBeGreaterThanOrEqual(15);
     expect(found[0].nextDue).toBe("2026-08-15");
   });
 });
@@ -171,5 +171,67 @@ describe("what falls inside the horizon", () => {
   it("catches a missed occurrence up to today rather than forgetting it", () => {
     const due = dueBetween(cs, "2026-10-20", "2026-10-31");
     expect(due[0]).toBe("2026-10-23");
+  });
+});
+
+/* The false negatives the dry run exposed. Every one of these is a real bill
+   that the first version threw away, and all four failed for the same reason:
+   a missed or missing occurrence was read as irregularity. */
+describe("a gap that is two periods, not chaos", () => {
+  it("finds the mortgage despite a month with no row", () => {
+    // 4 payments across 5 months: one 61-day gap, which raw variance called
+    // noise and discarded a $571 obligation over
+    const m = [
+      t("2026-06-02", -583.57, "Citizens Bank Mortgage Payment"),
+      t("2026-07-02", -583.57, "Citizens Bank Mortgage Payment"),
+      t("2026-08-02", -550.0, "Citizens Bank Mortgage Payment"),
+      t("2026-10-02", -571.71, "Citizens Bank Mortgage Payment"),
+    ];
+    const found = detectSeries(m);
+    expect(found).toHaveLength(1);
+    expect(found[0].cadence).toBe("monthly");
+    expect(found[0].nextDue).toBe("2026-11-02");
+  });
+
+  it("finds Smithville on three hits across five months", () => {
+    const sm = [
+      t("2026-06-05", -74.99, "Smithville Tele Bill"),
+      t("2026-07-05", -74.99, "Smithville Tele Bill"),
+      t("2026-10-05", -74.99, "Smithville Tele Bill"),
+    ];
+    const found = detectSeries(sm);
+    expect(found[0].cadence).toBe("monthly");
+    // it arrived on the period once out of two gaps — believed, but not
+    // trusted as much as something that never misses
+    expect(found[0].onTime).toBeCloseTo(0.5);
+    expect(found[0].confidence).toBeLessThan(0.8);
+  });
+
+  /* Philo.com was also reported missing, but its real dates are not in hand
+     — only that there are four between 06-10 and 09-22 with the amount
+     moving. Inventing dates and then tuning the fit until they pass would be
+     fitting the detector to a guess, which is how you get an algorithm that
+     works beautifully on fiction. Left untested until the real rows turn up. */
+});
+
+describe("what the looser fit must still refuse", () => {
+  it("does not read a noisy payee as weekly just because skips are allowed", () => {
+    /* Allowing skips nearly cost the whole design: with a ±3 day tolerance on
+       a 7-day period, the Zelle payee — $412 fortnightly plus ad-hoc $20s and
+       $74s — fitted "weekly" as a whole, which swallowed the one series that
+       mattered. The tolerance is what stops it. */
+    const found = detectSeries([...CHILD_SUPPORT, ...ADHOC]);
+    const weekly = found.filter((s) => s.cadence === "weekly");
+    expect(weekly).toEqual([]);
+    expect(found.find((s) => s.amount === 412)).toBeDefined();
+  });
+
+  it("does not turn three scattered payments into a quarterly bill", () => {
+    const junk = [
+      t("2026-01-04", -60, "Random Shop"),
+      t("2026-03-19", -60, "Random Shop"),
+      t("2026-09-02", -60, "Random Shop"),
+    ];
+    expect(detectSeries(junk)).toEqual([]);
   });
 });
