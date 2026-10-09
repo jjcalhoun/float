@@ -16,6 +16,7 @@
 import { useMemo, useState } from "react";
 import { useTransactions, useAccounts } from "@/hooks/useSupabaseData";
 import { useRecurringPayees, useSetRecurringPayee } from "@/hooks/useRecurringPayees";
+import { useSimplefinMappings } from "@/hooks/useSimplefin";
 import { useTxnWindow } from "@/components/providers";
 import { detectSeries, isStale, SUGGEST, type Series, type Txn } from "@/lib/v2/recurring";
 import { normalisePayee, displayPayee } from "@/lib/v2/payee";
@@ -47,9 +48,26 @@ export default function RecurringLab() {
     ensureSince(since.toISOString().slice(0, 10));
   }, [ensureSince]);
 
+  /* Checking accounts the bank feed actually covers.
+   *
+   * "Every checking account" was wrong, and it showed: the HELOC payment and
+   * the Earnest student loan are paid from IUCU, which is out of scope
+   * entirely — v2 is about what SimpleFIN sees at Chase. Scoping by account
+   * TYPE quietly dragged a whole second bank back in, and the suggestions
+   * list filled with obligations that have nothing to do with the number
+   * screen 1 is meant to produce.
+   *
+   * Requiring a SimpleFIN mapping says the same thing in the app's own terms:
+   * if the feed does not cover it, this cannot reason about it. */
+  const { data: mappings = [] } = useSimplefinMappings();
+  const syncedIds = useMemo(() => new Set(mappings.map((m) => m.account_id)), [mappings]);
+  const spendingAccounts = useMemo(
+    () => accounts.filter((a) => a.type === "checking" && syncedIds.has(a.id)),
+    [accounts, syncedIds],
+  );
   const spending = useMemo(
-    () => new Set(accounts.filter((a) => a.type === "checking").map((a) => a.id)),
-    [accounts],
+    () => new Set(spendingAccounts.map((a) => a.id)),
+    [spendingAccounts],
   );
   const creditIds = useMemo(
     () => new Set(accounts.filter((a) => a.type === "credit").map((a) => a.id)),
@@ -87,6 +105,11 @@ export default function RecurringLab() {
 
   const series = useMemo(() => detectSeries(scoped, SUGGEST), [scoped]);
 
+  /* Income is kept apart from bills throughout.
+     They do different jobs: bills are subtracted from the balance, while
+     income sets the HORIZON — "safe to spend until the next ADP deposit" —
+     so mixing them in one list invites exactly the confusion of treating a
+     paycheck as a fixed cost. */
   const { fixed, suggested, dismissed } = useMemo(() => {
     const fixed: Series[] = [];
     const suggested: Series[] = [];
@@ -100,8 +123,14 @@ export default function RecurringLab() {
     return { fixed, suggested, dismissed };
   }, [series, decisions, today]);
 
+  const out = (xs: Series[]) => xs.filter((s) => s.direction === "out");
+  const inc = (xs: Series[]) => xs.filter((s) => s.direction === "in");
+
   const monthly = fixed
     .filter((s) => s.direction === "out")
+    .reduce((sum, s) => sum + (s.amount * 365.25) / 12 / s.periodDays, 0);
+  const monthlyIn = fixed
+    .filter((s) => s.direction === "in")
     .reduce((sum, s) => sum + (s.amount * 365.25) / 12 / s.periodDays, 0);
 
   const decide = (s: Series, decision: "fixed" | "dismissed" | null) =>
@@ -119,8 +148,11 @@ export default function RecurringLab() {
           Recurring
         </h1>
         <p className="text-xs mt-1" style={{ color: "var(--color-muted)" }}>
-          Suggestions come from your Chase history. Nothing counts as a fixed
-          cost until you keep it.
+          Nothing counts as a fixed cost until you keep it. Reading{" "}
+          {spendingAccounts.length === 0
+            ? "no synced checking accounts"
+            : spendingAccounts.map((a) => a.name).join(", ")}
+          .
         </p>
       </div>
 
@@ -138,29 +170,37 @@ export default function RecurringLab() {
           </span>
         </p>
         <p className="text-xs mt-1" style={{ color: "var(--color-faint)" }}>
-          from {fixed.length} merchant{fixed.length === 1 ? "" : "s"}{" "}
-          you&apos;ve kept
+          from {out(fixed).length} kept
+          {monthlyIn > 0 && <> · {fmt0(monthlyIn)} / month in</>}
         </p>
       </Card>
 
-      {fixed.length > 0 && (
-        <Group title="Fixed costs" subtitle="these are what screen 1 will count">
-          {fixed.map((s) => (
+      {out(fixed).length > 0 && (
+        <Group title="Fixed costs" subtitle="these are what screen 1 will subtract">
+          {out(fixed).map((s) => (
+            <Row key={s.key} s={s} action="remove" onAct={() => decide(s, null)} />
+          ))}
+        </Group>
+      )}
+
+      {inc(fixed).length > 0 && (
+        <Group title="Income" subtitle="these set the horizon — safe to spend until the next one">
+          {inc(fixed).map((s) => (
             <Row key={s.key} s={s} action="remove" onAct={() => decide(s, null)} />
           ))}
         </Group>
       )}
 
       <Group
-        title={`Suggestions${suggested.length ? ` (${suggested.length})` : ""}`}
+        title={`Suggested bills${out(suggested).length ? ` (${out(suggested).length})` : ""}`}
         subtitle="found in your history — keep the real obligations, dismiss the rest"
       >
-        {suggested.length === 0 ? (
+        {out(suggested).length === 0 ? (
           <p className="px-3 py-4 text-sm" style={{ color: "var(--color-faint)" }}>
             Nothing new.
           </p>
         ) : (
-          suggested.map((s) => (
+          out(suggested).map((s) => (
             <Row
               key={s.key}
               s={s}
@@ -171,6 +211,20 @@ export default function RecurringLab() {
           ))
         )}
       </Group>
+
+      {inc(suggested).length > 0 && (
+        <Group title={`Suggested income (${inc(suggested).length})`} subtitle="money arriving on a rhythm">
+          {inc(suggested).map((s) => (
+            <Row
+              key={s.key}
+              s={s}
+              action="keep"
+              onAct={() => decide(s, "fixed")}
+              onDismiss={() => decide(s, "dismissed")}
+            />
+          ))}
+        </Group>
+      )}
 
       {dismissed.length > 0 && (
         <div>
