@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalisePayee, displayPayee } from "./payee";
+import { normalisePayee, displayPayee, aliasMap } from "./payee";
 
 /* Every string here is real, taken from the Chase feed. */
 
@@ -89,5 +89,61 @@ describe("a merchant that bills under two names", () => {
 
   it("leaves a dot that is not a TLD alone", () => {
     expect(normalisePayee("St. Mary's")).toBe("st. mary's");
+  });
+});
+
+describe("one bill posted under two names", () => {
+  /* Real: Chase prefixes some ACH debits with their originator, so the same
+     Smithville internet bill arrives twice under different descriptions —
+     and was duly offered twice, so it ended up both kept and dismissed. */
+  const smithville = [
+    { key: normalisePayee("Smithville Tele Bill"), amount: 74.99 },
+    { key: normalisePayee("Certificate of Origin Smithville"), amount: 74.99 },
+  ];
+
+  it("merges the ACH-prefixed name into the real one", () => {
+    const m = aliasMap(smithville);
+    expect(m.get("certificate of origin smithville")).toBe("smithville tele bill");
+  });
+
+  it("keeps the more specific name — it says what the bill IS", () => {
+    const m = aliasMap(smithville);
+    expect(m.has("smithville tele bill")).toBe(false);
+  });
+
+  it("merges the mortgage, whose amount drifts with escrow", () => {
+    const m = aliasMap([
+      { key: normalisePayee("Citizens Bank Mortgage Payment"), amount: 571.71 },
+      { key: normalisePayee("Certificate of Origin Citizens"), amount: 583.57 },
+    ]);
+    expect(m.get("certificate of origin citizens")).toBe("citizens bank mortgage payment");
+  });
+
+  it("will NOT merge on the name alone", () => {
+    // "Target" is a subset of "Target Optical", and they are not the same shop
+    const m = aliasMap([
+      { key: "target", amount: 48 },
+      { key: "target optical", amount: 310 },
+    ]);
+    expect(m.size).toBe(0);
+  });
+
+  it("will NOT merge on the amount alone", () => {
+    // every $9.99 subscription would collapse into one
+    const m = aliasMap([
+      { key: "netflix", amount: 9.99 },
+      { key: "spotify", amount: 9.99 },
+    ]);
+    expect(m.size).toBe(0);
+  });
+
+  it("collapses a three-way split to one name", () => {
+    const m = aliasMap([
+      { key: "acme", amount: 50 },
+      { key: "acme utility", amount: 50 },
+      { key: "acme utility co of indiana", amount: 50 },
+    ]);
+    expect(m.get("acme")).toBe("acme utility co of indiana");
+    expect(m.get("acme utility")).toBe("acme utility co of indiana");
   });
 });
