@@ -58,6 +58,14 @@ export default function DetectorLab() {
   const scoped: Txn[] = useMemo(
     () =>
       transactions
+        /* Only what the bank actually sent.
+           "payday allocation to IUCU checking" turned up as detected income,
+           and it is not a deposit at all — it is a row v1 wrote for itself.
+           ADP splits the pay at source, so the money never passes through
+           this account. v2 is built on what SimpleFIN sees, and anything the
+           old app invented has to stay out of it or the detector learns from
+           its predecessor's bookkeeping instead of from the bank. */
+        .filter((t) => t.source === "sync")
         // Transfers are kept deliberately: the card payment and the standing
         // transfer to savings both leave checking every month, so they are
         // exactly the kind of recurring outflow the horizon needs to know.
@@ -76,16 +84,25 @@ export default function DetectorLab() {
   const live = series.filter((s) => !isStale(s, today));
   const stale = series.filter((s) => isStale(s, today));
 
-  // What it did NOT claim: payees with enough hits to look recurring that the
-  // cadence test threw out. This is where false negatives hide.
+  /* What it did NOT claim: payees with enough hits to look recurring that the
+     cadence test threw out. This is where false negatives hide.
+     Payees that DID yield a series are marked, because otherwise the list
+     lies: the ad-hoc $20 and $74 Zelles to the same person legitimately go
+     unclaimed even when the $412 fortnightly series was found perfectly, and
+     seeing the payee here reads as a miss when nothing was missed. */
   const rejected = useMemo(() => {
     const claimed = new Set(series.flatMap((s) => s.txnIds));
-    const by = new Map<string, { hits: number; total: number; label: string }>();
+    const payeesWithSeries = new Set(
+      series.map((s) => normalisePayee(s.payee)),
+    );
+    const by = new Map<string, { hits: number; total: number; label: string; partial: boolean }>();
     for (const t of scoped) {
       if (claimed.has(t.id) || t.amount >= 0) continue;
       const k = normalisePayee(t.merchant || t.description);
       if (!k) continue;
-      const e = by.get(k) ?? { hits: 0, total: 0, label: displayPayee(t.merchant || t.description) };
+      const e =
+        by.get(k) ??
+        { hits: 0, total: 0, label: displayPayee(t.merchant || t.description), partial: payeesWithSeries.has(k) };
       e.hits++;
       e.total += Math.abs(t.amount);
       by.set(k, e);
@@ -95,7 +112,7 @@ export default function DetectorLab() {
 
   const monthlyFixed = live
     .filter((s) => s.direction === "out")
-    .reduce((sum, s) => sum + (s.amount * 365.25) / 12 / s.medianGap, 0);
+    .reduce((sum, s) => sum + (s.amount * 365.25) / 12 / s.periodDays, 0);
 
   return (
     <main className="p-4 space-y-5 pb-24">
@@ -158,13 +175,17 @@ export default function DetectorLab() {
         </Section>
       )}
 
-      <Section title="Not claimed" subtitle="3+ outflows at one payee that failed the cadence test — check nothing important is here">
+      <Section
+        title="Not claimed"
+        subtitle="3+ outflows at one payee with no series. &quot;leftovers&quot; means a series WAS found at that payee and these are the one-offs around it"
+      >
         {rejected.map((r) => (
           <div key={r.label} className="flex items-center justify-between px-3 py-2">
             <span className="text-sm truncate" style={{ color: "var(--color-text)" }}>
               {r.label}
             </span>
             <span className="text-xs shrink-0" style={{ color: "var(--color-faint)" }}>
+              {r.partial && <span style={{ color: "var(--color-primary)" }}>leftovers · </span>}
               {r.hits}× · {fmt0(r.total)}
             </span>
           </div>
