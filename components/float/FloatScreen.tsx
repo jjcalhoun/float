@@ -25,6 +25,7 @@ import { detectSeries, SUGGEST, type Series, type Txn } from "@/lib/v2/recurring
 import { normalisePayee } from "@/lib/v2/payee";
 import { safeToSpend } from "@/lib/v2/safeToSpend";
 import { applyOverrides } from "@/lib/v2/overrides";
+import { spendableBalance } from "@/lib/v2/balance";
 import { fmt, fmt0, shortDate } from "@/lib/format";
 import { todayISO } from "@/lib/dates";
 import { Card } from "@/components/ui/Card";
@@ -48,19 +49,12 @@ export function FloatScreen() {
 
   const spendingAccounts = useMemo(() => cashAccounts(accounts, mappings), [accounts, mappings]);
 
-  /* What the bank says, not what we computed.
-     A balance derived from transactions drifts whenever the feed misses
-     something, and this number is only worth having if it matches the app on
-     your phone. So the live figure SimpleFIN reports wins — but it can be
-     absent before the first sync, and treating absent as ZERO would show a
-     confident, catastrophically wrong number. Per account, fall back to the
-     computed balance. */
+  /* Which balance to believe, and what to call it: lib/v2/balance.ts.
+     Short version — available, not posted, because Chase's app shows
+     available and a number that disagrees with the bank app is worth
+     nothing however it was derived. */
   const { data: computed = {} } = useAccountBalances();
-  const balance = spendingAccounts.reduce(
-    (s, a) => s + Number(a.live_balance ?? computed[a.id] ?? 0),
-    0,
-  );
-  const usingLive = spendingAccounts.some((a) => a.live_balance != null);
+  const { total: balance, source, pending } = spendableBalance(spendingAccounts, computed);
   const balanceAt = spendingAccounts
     .map((a) => a.live_balance_at)
     .filter(Boolean)
@@ -100,6 +94,7 @@ export function FloatScreen() {
   const cardPayment = Number(settings?.v2_card_payment ?? 0);
   const r = safeToSpend({ balance, kept, today, floor, cardPayment });
 
+  const asOf = balanceAt ? ` as of ${shortDate(balanceAt.slice(0, 10))}` : "";
   const loading = la || lt;
 
   return (
@@ -125,9 +120,11 @@ export function FloatScreen() {
         {cardPayment > 0 && <Line label="card payment" value={-cardPayment} />}
         {floor > 0 && <Line label="floor" value={-floor} dim />}
         <p className="text-xs pt-1" style={{ color: "var(--color-faint)" }}>
-          {usingLive && balanceAt
-            ? `balance as of ${shortDate(balanceAt.slice(0, 10))}`
-            : "balance computed from transactions — no live figure from the bank yet"}
+          {source === "computed"
+            ? "computed from transactions — no live figure from the bank yet"
+            : source === "posted"
+              ? `posted balance${asOf} — this bank publishes no available balance, so pending charges are not deducted`
+              : `available balance${asOf}${pending > 0.005 ? ` · ${fmt0(pending)} pending` : ""}`}
         </p>
       </Card>
 

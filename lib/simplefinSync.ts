@@ -105,10 +105,18 @@ export async function syncUser(
       // changed — so "N balances updated" reflects real movement, not writes.
       const newBalance = Number(acct.balance);
       const prevBalance = balanceFor.get(ourAccountId);
+      /* Both figures. `balance` is what has posted; `available-balance` is
+         that less pending authorisations and holds, and is what the bank's
+         own app shows you. Screen 1 wants available — a pending charge is
+         money that is gone — while reconciling against a list of
+         transactions wants posted, so neither can be dropped. Not every
+         institution sends available. */
+      const avail = acct["available-balance"];
       const { error: balErr } = await supabase
         .from("accounts")
         .update({
           live_balance: newBalance,
+          live_available_balance: avail == null ? null : Number(avail),
           live_balance_at: new Date(acct["balance-date"] * 1000).toISOString(),
         })
         .eq("id", ourAccountId)
