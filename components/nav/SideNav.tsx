@@ -8,6 +8,7 @@ const TABS = [
   { href: "/", label: "Home", icon: "home" },
   /* v2, while it is being built: reachable without typing the URL. */
   { href: "/float", label: "Float", icon: "sailing" },
+  { href: "/spending", label: "Spending", icon: "receipt_long" },
   { href: "/activity", label: "Activity", icon: "grid_view" },
   { href: "/debt", label: "Debt", icon: "payments" },
   { href: "/profile", label: "Profile", icon: "person" },
