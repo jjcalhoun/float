@@ -22,6 +22,7 @@ import { useMemo, useState } from "react";
 import { useTransactions, useAccounts } from "@/hooks/useSupabaseData";
 import { useRecurringPayees, useSetRecurringPayee } from "@/hooks/useRecurringPayees";
 import { useSimplefinMappings } from "@/hooks/useSimplefin";
+import { cashAccounts, isGenerated } from "@/lib/v2/scope";
 import { useTxnWindow } from "@/components/providers";
 import { detectSeries, isStale, SUGGEST, type Series, type Txn } from "@/lib/v2/recurring";
 import { normalisePayee, displayPayee } from "@/lib/v2/payee";
@@ -66,11 +67,7 @@ export default function RecurringLab() {
    * Requiring a SimpleFIN mapping says the same thing in the app's own terms:
    * if the feed does not cover it, this cannot reason about it. */
   const { data: mappings = [] } = useSimplefinMappings();
-  const syncedIds = useMemo(() => new Set(mappings.map((m) => m.account_id)), [mappings]);
-  const spendingAccounts = useMemo(
-    () => accounts.filter((a) => a.type === "checking" && syncedIds.has(a.id)),
-    [accounts, syncedIds],
-  );
+  const spendingAccounts = useMemo(() => cashAccounts(accounts, mappings), [accounts, mappings]);
   const spending = useMemo(
     () => new Set(spendingAccounts.map((a) => a.id)),
     [spendingAccounts],
@@ -92,8 +89,12 @@ export default function RecurringLab() {
            excluding them would quietly blind the detector to anything not on
            the feed. If something generated still slips through, it is one
            "Not a bill" tap away — which is rather the point of the list. */
-        .filter((t) => !["recurring", "escrow", "interest"].includes(t.source))
-        .filter((t) => spending.size === 0 || spending.has(t.account_id))
+        .filter((t) => !isGenerated(t.source))
+        /* Fails CLOSED. "No synced accounts yet, so use them all" reads as
+           helpful and is how IUCU flickers into the list for the half-second
+           before the mappings query returns. An empty list is visibly empty;
+           a list quietly full of the wrong bank is not. */
+        .filter((t) => spending.has(t.account_id))
         /* A card payment is regular money that is already answered: screen 1
            shows the balance and takes the payment you intend to make. Offering
            "Chase Credit Card, monthly, $658" as a fixed cost would be a second

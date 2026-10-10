@@ -17,6 +17,7 @@ import { useRecurringPayees } from "@/hooks/useRecurringPayees";
 import { useSimplefinMappings } from "@/hooks/useSimplefin";
 import { useTxnWindow } from "@/components/providers";
 import { summariseSpending, type SpendGroup, type SpendTxn } from "@/lib/v2/spending";
+import { spendAccounts, isGenerated } from "@/lib/v2/scope";
 import { fmt, fmt0, shortDate } from "@/lib/format";
 import { todayISO } from "@/lib/dates";
 import { Card } from "@/components/ui/Card";
@@ -39,16 +40,8 @@ export default function SpendingScreen() {
     ensureSince(since.toISOString().slice(0, 10));
   }, [ensureSince]);
 
-  /* Synced checking plus every card. Same scoping rule as the other two
-     screens: if the feed does not cover it, v2 does not reason about it. */
-  const syncedIds = useMemo(() => new Set(mappings.map((m) => m.account_id)), [mappings]);
-  const scopeAccounts = useMemo(
-    () =>
-      accounts.filter(
-        (a) => a.type === "credit" || (a.type === "checking" && syncedIds.has(a.id)),
-      ),
-    [accounts, syncedIds],
-  );
+  // Synced checking and synced cards. The rule lives in lib/v2/scope.ts.
+  const scopeAccounts = useMemo(() => spendAccounts(accounts, mappings), [accounts, mappings]);
   const accountIds = useMemo(
     () => new Set(scopeAccounts.map((a) => a.id)),
     [scopeAccounts],
@@ -67,8 +60,11 @@ export default function SpendingScreen() {
   const txns: SpendTxn[] = useMemo(
     () =>
       transactions
-        /* Rows the app generated for itself are not purchases. */
-        .filter((t) => !["recurring", "escrow"].includes(t.source))
+        /* Rows the app generated for itself are not purchases. Interest is
+           one of them and I left it out of this list: it is a charge the app
+           posted against a loan, not money you spent at a merchant, and the
+           other two v2 screens have excluded it from the start. */
+        .filter((t) => !isGenerated(t.source))
         .map((t) => ({
           id: t.id,
           date: t.date,
