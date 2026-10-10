@@ -54,7 +54,8 @@ describe("the horizon", () => {
   });
 
   it("moves to the end of the month once payday has passed", () => {
-    expect(nextPayday(kept, "2026-10-16")).toBe("2026-10-31");
+    // 2026-10-31 is a Saturday, so the deposit lands the Friday before
+    expect(nextPayday(kept, "2026-10-16")).toBe("2026-10-30");
   });
 
   it("is null when no income has been kept, and the maths still works", () => {
@@ -104,10 +105,10 @@ describe("the day after payday", () => {
     /* "Safe until the 31st" invites spending it all on the 30th. The mortgage
        goes out on the 2nd, so that would be a trap rather than information. */
     const r = safeToSpend({ balance: 2000, kept, today: "2026-10-20", floor: 300, cardPayment: 0 });
-    expect(r.horizon).toBe("2026-10-31");
+    expect(r.horizon).toBe("2026-10-30");
     expect(r.soonAfter.map((d) => d.payee)).toContain("Citizens Bank Mortgage Payment");
     expect(r.soonAfterTotal).toBeGreaterThan(0);
-    expect(r.soonAfter.every((d) => d.date > "2026-10-31")).toBe(true);
+    expect(r.soonAfter.every((d) => d.date > "2026-10-30")).toBe(true);
   });
 
   it("never counts the same occurrence on both sides of payday", () => {
@@ -127,5 +128,60 @@ describe("a bill due ON payday", () => {
     const after = r.soonAfter.filter((d) => d.date === r.horizon);
     expect(after).toEqual([]);
     expect(onPayday.every((d) => r.due.includes(d))).toBe(true);
+  });
+});
+
+describe("payday lands early at a weekend", () => {
+  /* Pay on the 15th and the last day means Friday the 13th when the 15th is a
+     Sunday. The detector had already seen this and I called it noise: the
+     14th of August among a run of 15ths is not slippage, it is the rule —
+     2026-08-15 was a Saturday.
+     It matters because the horizon is the date everything is measured to, and
+     2026-10-31 is a Saturday while 2026-11-15 is a Sunday. */
+  it("Saturday pay dates move back to the Friday", () => {
+    expect(nextPayday(kept, "2026-10-16")).toBe("2026-10-30"); // 31st is a Sat
+  });
+
+  it("Sunday pay dates move back two days", () => {
+    expect(nextPayday(kept, "2026-11-01")).toBe("2026-11-13"); // 15th is a Sun
+  });
+
+  it("leaves a weekday pay date alone", () => {
+    expect(nextPayday(kept, "2026-12-01")).toBe("2026-12-15"); // a Tuesday
+  });
+
+  it("does NOT shift bills, which post the next business day instead", () => {
+    /* Moving a bill earlier is the one direction that makes the number look
+       better than it is. */
+    const r = safeToSpend({ balance: 5000, kept, today: "2026-10-25", floor: 0, cardPayment: 0 });
+    const mortgage = [...r.due, ...r.soonAfter].find((d) => d.payee.startsWith("Citizens"));
+    expect(mortgage?.date).toBe("2026-11-02"); // a Monday, unshifted
+  });
+});
+
+describe("the horizon never stalls or goes backwards", () => {
+  /* Shifting a payday back to Friday is not monotonic: from a payday already
+     moved to Friday the 30th, "the late anchor this month" is still the 31st,
+     which shifts back to the 30th — the same date, forever. The loop guard in
+     dueBetween caught it, which is how it was found. */
+  it("advances through a year of paydays without repeating", () => {
+    const seen: string[] = [];
+    let d = "2026-10-01";
+    for (let i = 0; i < 24; i++) {
+      const next = nextPayday(kept, d);
+      if (!next) break;
+      expect(next > d || next === d).toBe(true);
+      expect(seen).not.toContain(next);
+      seen.push(next);
+      d = new Date(Date.parse(`${next}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
+    }
+    expect(seen.length).toBe(24);
+  });
+
+  it("never names a payday in the past", () => {
+    for (const today of ["2026-10-30", "2026-10-31", "2026-11-14", "2026-11-15", "2027-02-28"]) {
+      const next = nextPayday(kept, today);
+      expect(next! >= today).toBe(true);
+    }
   });
 });

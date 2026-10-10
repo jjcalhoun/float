@@ -86,6 +86,29 @@ const addDays = (iso: string, n: number) =>
   new Date(Date.parse(`${iso}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
 
 const dayOfMonth = (iso: string) => Number(iso.slice(8, 10));
+const weekday = (iso: string) => new Date(`${iso}T00:00:00Z`).getUTCDay(); // 0 Sun
+
+/* Payroll lands EARLY when the date falls at a weekend.
+ *
+ * Pay on the 15th and the last day means Friday the 13th when the 15th is a
+ * Sunday. The detector had already seen this and I had called it noise: the
+ * 14th of August among a run of 15ths is not slippage, it is the rule — the
+ * 15th was a Saturday.
+ *
+ * It matters because the horizon is the date everything is measured to.
+ * 2026-10-31 is a Saturday and 2026-11-15 a Sunday, so two of the next three
+ * paydays were being named a day or two late.
+ *
+ * INCOME ONLY. A direct deposit moves earlier to clear before the weekend; an
+ * ACH debit generally posts on the NEXT business day instead. Shifting bills
+ * the same way would move them earlier than they really land, which is the
+ * one direction that makes the number look better than it is. */
+const shiftForPayroll = (iso: string): string => {
+  const d = weekday(iso);
+  if (d === 6) return addDays(iso, -1); // Saturday → Friday
+  if (d === 0) return addDays(iso, -2); // Sunday → Friday
+  return iso;
+};
 const lastDayOf = (y: number, m: number) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
 
 /** Add whole months, clamping to the month's length: the 31st of a 30-day
@@ -215,13 +238,19 @@ function fitCadence(gaps: number[], minFit: number): Fit | null {
  *  15/16/15/16 alternation that no single gap describes — predicting by the
  *  median put the next paycheck a day late, and the paycheck is what the
  *  whole horizon is anchored to. */
-function nextAfter(dates: string[], cadence: Cadence, periodDays: number): string {
+function nextAfter(
+  dates: string[],
+  cadence: Cadence,
+  periodDays: number,
+  direction: "in" | "out",
+): string {
+  const payroll = (iso: string) => (direction === "in" ? shiftForPayroll(iso) : iso);
   const last = dates[dates.length - 1];
 
   if (cadence === "weekly" || cadence === "biweekly") return addDays(last, Math.round(periodDays));
-  if (cadence === "monthly") return addMonths(last, 1);
-  if (cadence === "quarterly") return addMonths(last, 3);
-  if (cadence === "annual") return addMonths(last, 12);
+  if (cadence === "monthly") return payroll(addMonths(last, 1));
+  if (cadence === "quarterly") return payroll(addMonths(last, 3));
+  if (cadence === "annual") return payroll(addMonths(last, 12));
 
   // Semimonthly: find the two days of the month it actually lands on, and
   // alternate between them. "Late in the month" is treated as the month's
@@ -235,9 +264,9 @@ function nextAfter(dates: string[], cadence: Cadence, periodDays: number): strin
     const y = Number(last.slice(0, 4));
     const m = Number(last.slice(5, 7)) - 1;
     const day = isEom ? lastDayOf(y, m) : Math.round(median(lateVals) || 30);
-    return `${last.slice(0, 7)}-${String(Math.min(day, lastDayOf(y, m))).padStart(2, "0")}`;
+    return payroll(`${last.slice(0, 7)}-${String(Math.min(day, lastDayOf(y, m))).padStart(2, "0")}`);
   }
-  return addMonths(last, 1, early);
+  return payroll(addMonths(last, 1, early));
 }
 
 /** Split a payee's occurrences into amount clusters: the $412 fortnightly
@@ -406,7 +435,7 @@ function buildSeries(
     amountSpread,
     hits: dates.length,
     lastSeen: dates[dates.length - 1],
-    nextDue: nextAfter(dates, f.cadence, f.periodDays),
+    nextDue: nextAfter(dates, f.cadence, f.periodDays, direction),
     confidence: confidenceOf(dates.length, f, amountSpread),
     txnIds: txns.map((t) => t.id),
   };
@@ -440,31 +469,43 @@ export function isStale(s: Series, today: string, graceDays = 0): boolean {
  *  date the entire number is measured to — came out a day early every other
  *  cycle. A month is not 30.44 days when you are naming a date. */
 export function advance(s: Series, from: string): string {
+  const payroll = (iso: string) => (s.direction === "in" ? shiftForPayroll(iso) : iso);
+
   if (s.cadence === "weekly" || s.cadence === "biweekly") {
     return addDays(from, Math.round(s.periodDays));
   }
-  if (s.cadence === "quarterly") return addMonths(from, 3);
-  if (s.cadence === "annual") return addMonths(from, 12);
+  if (s.cadence === "quarterly") return payroll(addMonths(from, 3));
+  if (s.cadence === "annual") return payroll(addMonths(from, 12));
 
   if (s.cadence === "semimonthly" && s.anchors.length >= 2) {
     /* The two COMMONEST days, then put them in order — not the two smallest.
-       ADP's days are 15, 31, 14, 31, 15, 30: the 14th and the 30th are
-       business-day slippage, the 15th and the 31st are the schedule. Sorting
+       ADP's days are 15, 31, 14, 31, 15, 30: the 14th and the 30th are the
+       weekend rule at work, the 15th and the 31st are the schedule. Sorting
        all of them and taking the first two picked 14 and 15, and the horizon
        landed a fortnight out. */
     const [a, b] = s.anchors.slice(0, 2).sort((x, y) => x - y);
-    const y = Number(from.slice(0, 4));
-    const m = Number(from.slice(5, 7)) - 1;
-    const eom = lastDayOf(y, m);
-    const day = dayOfMonth(from);
-    // The later anchor at or past 28 means "the end of the month", which is
-    // 28, 30 or 31 depending on where you are standing.
-    const late = b >= 28 ? eom : b;
-    if (day < late) return `${from.slice(0, 7)}-${String(Math.min(late, eom)).padStart(2, "0")}`;
-    return addMonths(from, 1, a);
+
+    /* Walk the SCHEDULE and shift each candidate, rather than shifting and
+       then walking from the shifted date.
+       Shifting backwards is not monotonic: from a payday already moved to
+       Friday the 30th, "the late anchor this month" is still the 31st, which
+       shifts back to the 30th — the same date, forever. The guard in
+       dueBetween caught the loop, which is how this was found. */
+    for (let step = 0; step < 4; step++) {
+      const base = addMonths(from, Math.floor(step / 2));
+      const y = Number(base.slice(0, 4));
+      const m = Number(base.slice(5, 7)) - 1;
+      const eom = lastDayOf(y, m);
+      // The later anchor at or past 28 means "the end of the month", which is
+      // 28, 30 or 31 depending on where you are standing.
+      const day = step % 2 === 0 ? Math.min(a, eom) : b >= 28 ? eom : Math.min(b, eom);
+      const scheduled = `${base.slice(0, 7)}-${String(day).padStart(2, "0")}`;
+      const actual = payroll(scheduled);
+      if (actual > from) return actual;
+    }
   }
 
-  return addMonths(from, 1);
+  return payroll(addMonths(from, 1));
 }
 
 /** Occurrences expected between now and a horizon, inclusive of both ends.

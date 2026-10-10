@@ -134,7 +134,8 @@ describe("the clean ones", () => {
     const found = detectSeries(adp);
     expect(found[0].direction).toBe("in");
     expect(found[0].periodDays).toBeGreaterThanOrEqual(15);
-    expect(found[0].nextDue).toBe("2026-08-15");
+    // 2026-08-15 is a Saturday, so payroll lands the Friday before
+    expect(found[0].nextDue).toBe("2026-08-14");
   });
 });
 
