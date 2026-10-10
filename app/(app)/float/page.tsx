@@ -19,6 +19,7 @@ import {
 } from "@/hooks/useSupabaseData";
 import { useRecurringPayees } from "@/hooks/useRecurringPayees";
 import { useSimplefinMappings } from "@/hooks/useSimplefin";
+import { cashAccounts, isGenerated } from "@/lib/v2/scope";
 import { useTxnWindow } from "@/components/providers";
 import { detectSeries, SUGGEST, type Series, type Txn } from "@/lib/v2/recurring";
 import { normalisePayee } from "@/lib/v2/payee";
@@ -45,11 +46,7 @@ export default function FloatScreen() {
     ensureSince(since.toISOString().slice(0, 10));
   }, [ensureSince]);
 
-  const syncedIds = useMemo(() => new Set(mappings.map((m) => m.account_id)), [mappings]);
-  const spendingAccounts = useMemo(
-    () => accounts.filter((a) => a.type === "checking" && syncedIds.has(a.id)),
-    [accounts, syncedIds],
-  );
+  const spendingAccounts = useMemo(() => cashAccounts(accounts, mappings), [accounts, mappings]);
 
   /* What the bank says, not what we computed.
      A balance derived from transactions drifts whenever the feed misses
@@ -75,7 +72,7 @@ export default function FloatScreen() {
   const scoped: Txn[] = useMemo(() => {
     const ids = new Set(spendingAccounts.map((a) => a.id));
     return transactions
-      .filter((t) => !["recurring", "escrow", "interest"].includes(t.source))
+      .filter((t) => !isGenerated(t.source))
       .filter((t) => ids.has(t.account_id))
       .map((t) => ({
         id: t.id,
