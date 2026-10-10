@@ -23,6 +23,7 @@ import { useTxnWindow } from "@/components/providers";
 import { detectSeries, SUGGEST, type Series, type Txn } from "@/lib/v2/recurring";
 import { normalisePayee } from "@/lib/v2/payee";
 import { safeToSpend } from "@/lib/v2/safeToSpend";
+import { applyOverrides } from "@/lib/v2/overrides";
 import { fmt, fmt0, shortDate } from "@/lib/format";
 import { todayISO } from "@/lib/dates";
 import { Card } from "@/components/ui/Card";
@@ -88,13 +89,17 @@ export default function FloatScreen() {
   // Only what you kept. A suggestion nobody acted on is not an obligation.
   const kept = useMemo(
     () =>
-      detectSeries(scoped, SUGGEST).filter(
-        (s) => decisions[normalisePayee(s.payee)]?.decision === "fixed",
+      applyOverrides(
+        detectSeries(scoped, SUGGEST).filter(
+          (s) => decisions[normalisePayee(s.payee)]?.decision === "fixed",
+        ),
+        decisions,
+        (s) => normalisePayee(s.payee),
       ),
     [scoped, decisions],
   );
 
-  const floor = Number(settings?.v2_floor ?? 300);
+  const floor = Number(settings?.v2_floor ?? 0);
   const cardPayment = Number(settings?.v2_card_payment ?? 0);
   const r = safeToSpend({ balance, kept, today, floor, cardPayment });
 
@@ -121,7 +126,7 @@ export default function FloatScreen() {
         <Line label={spendingAccounts.map((a) => a.name).join(" + ") || "No synced checking"} value={balance} />
         <Line label="due before then" value={-r.dueTotal} />
         {cardPayment > 0 && <Line label="card payment" value={-cardPayment} />}
-        <Line label="floor" value={-floor} dim />
+        {floor > 0 && <Line label="floor" value={-floor} dim />}
         <p className="text-xs pt-1" style={{ color: "var(--color-faint)" }}>
           {usingLive && balanceAt
             ? `balance as of ${shortDate(balanceAt.slice(0, 10))}`
