@@ -21,8 +21,10 @@
 -- strong opinion to hold on someone else's behalf.
 -- ============================================================================
 
+-- `if not exists` because this one was applied by hand before it was a file,
+-- and a migration that cannot be replayed over its own result is a trap.
 alter table public.recurring_payees
-  add column override_amount numeric(12,2);
+  add column if not exists override_amount numeric(12,2);
 
 comment on column public.recurring_payees.override_amount is
   'Replaces the detected amount. Null means keep inferring from history.';
