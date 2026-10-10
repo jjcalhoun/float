@@ -199,9 +199,14 @@ export default function FloatScreen() {
         />
       </Card>
 
-      <Link href="/lab" className="block text-center text-xs" style={{ color: "var(--color-primary)" }}>
-        Edit recurring
-      </Link>
+      <div className="flex justify-center gap-4 text-xs">
+        <Link href="/spending" style={{ color: "var(--color-primary)" }}>
+          Where it went
+        </Link>
+        <Link href="/lab" style={{ color: "var(--color-primary)" }}>
+          Edit recurring
+        </Link>
+      </div>
     </main>
   );
 }
