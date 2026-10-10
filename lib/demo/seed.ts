@@ -151,6 +151,24 @@ export function buildSeed(todayIso: string): DemoTables {
     simplefin_account_map: [],
   };
 
+  /* The demo's accounts are "on the feed".
+     v2 scopes itself to accounts a SimpleFIN mapping covers and fails closed
+     when there are none, so without this the demo shows $0 everywhere — a
+     correct answer to the question "what does the feed cover" and a useless
+     showcase. The car loan and savings are left off, as they would be. */
+  t.simplefin_connections = [
+    { id: "demo-conn", user_id: U, last_synced_at: `${todayIso}T06:00:00Z`, created_at: `${todayIso}T00:00:00Z`, updated_at: `${todayIso}T00:00:00Z` },
+  ];
+  t.simplefin_account_map = ["acc-chk", "acc-cc", "acc-cc2"].map((account_id, i) => ({
+    id: `demo-map-${i}`,
+    user_id: U,
+    connection_id: "demo-conn",
+    simplefin_account_id: `demo-sf-${account_id}`,
+    account_id,
+    org_name: "Demo Bank",
+    created_at: `${todayIso}T00:00:00Z`,
+  }));
+
   const stamp = { created_at: `${todayIso}T00:00:00Z`, updated_at: `${todayIso}T00:00:00Z` };
 
   t.accounts = ACCOUNTS.map((a, i) => ({

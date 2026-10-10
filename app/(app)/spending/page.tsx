@@ -150,7 +150,7 @@ export default function SpendingScreen() {
       />
 
       <div className="flex justify-center gap-4 text-xs">
-        <Link href="/float" style={{ color: "var(--color-primary)" }}>
+        <Link href="/" style={{ color: "var(--color-primary)" }}>
           Safe to spend
         </Link>
         <Link href="/lab" style={{ color: "var(--color-primary)" }}>
