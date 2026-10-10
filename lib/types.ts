@@ -114,6 +114,10 @@ export interface Settings {
   autocategorize_imports: boolean;
   /** spend view: card purchases reduce free-to-spend, the card payment counts zero */
   count_card_purchases: boolean;
+  /** v2: safe-to-spend never counts the last of the balance */
+  v2_floor: number;
+  /** v2: what you intend to pay the card this cycle */
+  v2_card_payment: number;
   investments_balance: number;
   investments_return: number;
   invest_monthly: number;
