@@ -71,6 +71,10 @@ export function ProfileScreen() {
           Settings
         </h2>
         <Card className="divide-y" style={{ borderColor: "var(--color-hairline)" }}>
+          {/* Off the nav, because it is a thing you set rather than a thing
+              you look at — but it decides what screen 1 subtracts, so it has
+              to be findable from somewhere other than the foot of a screen. */}
+          <LinkRow icon="repeat" label="Recurring bills and income" href="/lab" />
           <SettingRow icon="tune" label="Budget plan" onClick={() => setSheet("budget")} />
           <SettingRow icon="category" label="Manage categories" onClick={() => setSheet("categories")} />
           <SettingRow icon="account_balance" label="Bank connections" onClick={() => setSheet("connections")} />
