@@ -11,6 +11,11 @@
  * Amounts and cadences stay inferred. You are classifying merchants, never
  * typing figures — so when child support moves from $412 fortnightly to $231
  * weekly, the tick stays put and the numbers follow on their own.
+ *
+ * With one escape hatch: a kept amount can be typed over. Inference is right
+ * almost always and wrong exactly when something has just changed, because it
+ * takes three occurrences to move the median — and you already know the new
+ * figure. Clearing the override resumes inference.
  */
 
 import { useMemo, useState } from "react";
@@ -20,6 +25,7 @@ import { useSimplefinMappings } from "@/hooks/useSimplefin";
 import { useTxnWindow } from "@/components/providers";
 import { detectSeries, isStale, SUGGEST, type Series, type Txn } from "@/lib/v2/recurring";
 import { normalisePayee, displayPayee } from "@/lib/v2/payee";
+import { applyOverrides } from "@/lib/v2/overrides";
 import { fmt, fmt0, shortDate } from "@/lib/format";
 import { todayISO } from "@/lib/dates";
 import { Card } from "@/components/ui/Card";
@@ -103,7 +109,11 @@ export default function RecurringLab() {
     [transactions, spending, creditIds],
   );
 
-  const series = useMemo(() => detectSeries(scoped, SUGGEST), [scoped]);
+  const series = useMemo(
+     () =>
+       applyOverrides(detectSeries(scoped, SUGGEST), decisions, (s) => normalisePayee(s.payee)),
+     [scoped, decisions],
+   );
 
   /* Income is kept apart from bills throughout.
      They do different jobs: bills are subtracted from the balance, while
@@ -140,6 +150,20 @@ export default function RecurringLab() {
       noted_amount: s.amount,
       noted_cadence: s.cadence,
     });
+
+  /* null resumes inference. The decision itself is untouched: typing a figure
+     must never be able to un-keep a bill. */
+  const setAmount = (s: Series, override_amount: number | null) =>
+    setDecision.mutate({
+      payee_key: normalisePayee(s.payee),
+      decision: "fixed",
+      noted_amount: s.amount,
+      noted_cadence: s.cadence,
+      override_amount,
+    });
+
+  const overridden = (s: Series) =>
+    decisions[normalisePayee(s.payee)]?.override_amount != null;
 
   return (
     <main className="p-4 space-y-5 pb-24">
@@ -178,7 +202,14 @@ export default function RecurringLab() {
       {out(fixed).length > 0 && (
         <Group title="Fixed costs" subtitle="these are what screen 1 will subtract">
           {out(fixed).map((s) => (
-            <Row key={s.key} s={s} action="remove" onAct={() => decide(s, null)} />
+            <Row
+              key={s.key}
+              s={s}
+              action="remove"
+              onAct={() => decide(s, null)}
+              onAmount={(v) => setAmount(s, v)}
+              overridden={overridden(s)}
+            />
           ))}
         </Group>
       )}
@@ -186,7 +217,14 @@ export default function RecurringLab() {
       {inc(fixed).length > 0 && (
         <Group title="Income" subtitle="these set the horizon — safe to spend until the next one">
           {inc(fixed).map((s) => (
-            <Row key={s.key} s={s} action="remove" onAct={() => decide(s, null)} />
+            <Row
+              key={s.key}
+              s={s}
+              action="remove"
+              onAct={() => decide(s, null)}
+              onAmount={(v) => setAmount(s, v)}
+              overridden={overridden(s)}
+            />
           ))}
         </Group>
       )}
@@ -274,17 +312,62 @@ function Group({
   );
 }
 
+/* The inferred figure, typed over in place.
+   Showing the current number as the field's value — rather than an empty box —
+   means an override is a correction of something, and clearing it back to the
+   detected value is a visible act rather than a hidden setting. */
+function AmountField({
+  value,
+  sign,
+  onSave,
+}: {
+  value: number;
+  sign: string;
+  onSave: (v: number | null) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+
+  return (
+    <span className="flex items-baseline shrink-0">
+      <span className="text-sm" style={{ color: "var(--color-muted)" }}>
+        {sign}$
+      </span>
+      <input
+        inputMode="decimal"
+        aria-label="amount"
+        value={draft ?? value.toFixed(2)}
+        onFocus={() => setDraft(value.toFixed(2))}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          const n = Number(draft);
+          setDraft(null);
+          if (draft !== null && Number.isFinite(n) && n > 0 && Math.abs(n - value) > 0.004) {
+            onSave(n);
+          }
+        }}
+        className="w-[72px] text-right bg-transparent outline-none font-figure text-sm"
+        style={{ color: "var(--color-text)" }}
+      />
+    </span>
+  );
+}
+
 function Row({
   s,
   action,
   onAct,
   onDismiss,
+  onAmount,
+  overridden,
   dim,
 }: {
   s: Series;
   action: "keep" | "remove" | "undo";
   onAct: () => void;
   onDismiss?: () => void;
+  /** kept rows only: type over the inferred amount; null resumes inference */
+  onAmount?: (v: number | null) => void;
+  overridden?: boolean;
   dim?: boolean;
 }) {
   const label = action === "keep" ? "Keep" : action === "remove" ? "Remove" : "Undo";
@@ -295,17 +378,35 @@ function Row({
           <span className="text-sm truncate" style={{ color: "var(--color-text)" }}>
             {s.payee}
           </span>
-          <span
-            className="font-figure text-sm shrink-0"
-            style={{ color: s.direction === "in" ? "var(--color-positive)" : "var(--color-text)" }}
-          >
-            {s.direction === "in" ? "+" : ""}
-            {fmt(s.amount)}
-          </span>
+          {onAmount ? (
+            <AmountField
+              value={s.amount}
+              sign={s.direction === "in" ? "+" : ""}
+              onSave={onAmount}
+            />
+          ) : (
+            <span
+              className="font-figure text-sm shrink-0"
+              style={{ color: s.direction === "in" ? "var(--color-positive)" : "var(--color-text)" }}
+            >
+              {s.direction === "in" ? "+" : ""}
+              {fmt(s.amount)}
+            </span>
+          )}
         </div>
         <p className="text-xs" style={{ color: "var(--color-faint)" }}>
           {CADENCE_LABEL[s.cadence]} · {s.hits}× · next {shortDate(s.nextDue)}
-          {s.amountSpread > 0.08 && <> · varies ±{Math.round(s.amountSpread * 100)}%</>}
+          {!overridden && s.amountSpread > 0.08 && (
+            <> · varies ±{Math.round(s.amountSpread * 100)}%</>
+          )}
+          {overridden && onAmount && (
+            <>
+              {" "}· edited ·{" "}
+              <button onClick={() => onAmount(null)} className="underline">
+                use detected
+              </button>
+            </>
+          )}
         </p>
       </div>
       {onDismiss && (
