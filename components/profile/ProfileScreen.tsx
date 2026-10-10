@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useTheme } from "@/components/providers";
 import { useAccounts, useAccountBalances } from "@/hooks/useSupabaseData";
 import { fmt, shortDate } from "@/lib/format";
@@ -77,6 +78,22 @@ export function ProfileScreen() {
           <SettingRow icon="upload_file" label="Import CSV" onClick={() => setSheet("import")} />
           <SettingRow icon="event" label="Import start date" onClick={() => setSheet("importDate")} />
           <SettingRow icon="delete_sweep" label="Delete all transactions" onClick={() => setSheet("deleteAll")} />
+        </Card>
+      </section>
+
+      {/* The v1 screens, still here.
+          They came off the nav when the home screen became the number, but
+          the donut, the ledger, the month plan and the debt payoff plan all
+          still work and still know things about this account that v2 does
+          not model. Hidden is not the same as deleted. */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>
+          Original screens
+        </h2>
+        <Card className="divide-y" style={{ borderColor: "var(--color-hairline)" }}>
+          <LinkRow icon="donut_small" label="Home (donut and ledger)" href="/classic" />
+          <LinkRow icon="payments" label="Debt payoff" href="/debt" />
+          <LinkRow icon="insights" label="Insights" href="/insights" />
         </Card>
       </section>
       </div>{/* left column */}
@@ -178,5 +195,23 @@ function SettingRow({
         chevron_right
       </span>
     </button>
+  );
+}
+
+function LinkRow({ icon, label, href }: { icon: string; label: string; href: string }) {
+  return (
+    <Link href={href} className="w-full flex items-center justify-between px-4 py-3 text-left">
+      <span className="flex items-center gap-3">
+        <span className="material-symbols-outlined" style={{ fontSize: 20, color: "var(--color-muted)" }}>
+          {icon}
+        </span>
+        <span className="text-sm" style={{ color: "var(--color-text)" }}>
+          {label}
+        </span>
+      </span>
+      <span className="material-symbols-outlined" style={{ fontSize: 18, color: "var(--color-faint)" }}>
+        chevron_right
+      </span>
+    </Link>
   );
 }
