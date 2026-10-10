@@ -50,6 +50,9 @@ export interface Series {
   periodDays: number;
   /** share of gaps that were a single period — how reliably it arrives */
   onTime: number;
+  /** days of the month it lands on, commonest first. Semimonthly pay needs
+   *  both: stepping by 15.2 days drifts off the end of the month. */
+  anchors: number[];
   /** median amount, unsigned */
   amount: number;
   /** how much the amount moves, as a fraction of the median */
@@ -349,6 +352,16 @@ export function detectSeries(txns: Txn[], opts: DetectOptions = {}): Series[] {
   return out.sort((a, b) => b.confidence - a.confidence || b.amount - a.amount);
 }
 
+/** The days of the month a series lands on, commonest first. */
+function anchorDays(dates: string[]): number[] {
+  const counts = new Map<number, number>();
+  for (const d of dates) {
+    const k = dayOfMonth(d);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]).map(([d]) => d);
+}
+
 /** One candidate series, or null if these occurrences are not regular. */
 function buildSeries(
   key: string,
@@ -388,6 +401,7 @@ function buildSeries(
     cadence: f.cadence,
     periodDays: f.periodDays,
     onTime: f.onTime,
+    anchors: anchorDays(dates),
     amount: amt,
     amountSpread,
     hits: dates.length,
@@ -418,16 +432,52 @@ export function isStale(s: Series, today: string, graceDays = 0): boolean {
   return days(s.nextDue, today) > grace;
 }
 
+/** The next occurrence after a given date, following the calendar rather than
+ *  counting days.
+ *
+ *  Stepping by the period in days drifts: ADP pays the 15th and the last day,
+ *  and 15.2-day steps from the 15th land on the 30th, so the horizon — the
+ *  date the entire number is measured to — came out a day early every other
+ *  cycle. A month is not 30.44 days when you are naming a date. */
+export function advance(s: Series, from: string): string {
+  if (s.cadence === "weekly" || s.cadence === "biweekly") {
+    return addDays(from, Math.round(s.periodDays));
+  }
+  if (s.cadence === "quarterly") return addMonths(from, 3);
+  if (s.cadence === "annual") return addMonths(from, 12);
+
+  if (s.cadence === "semimonthly" && s.anchors.length >= 2) {
+    /* The two COMMONEST days, then put them in order — not the two smallest.
+       ADP's days are 15, 31, 14, 31, 15, 30: the 14th and the 30th are
+       business-day slippage, the 15th and the 31st are the schedule. Sorting
+       all of them and taking the first two picked 14 and 15, and the horizon
+       landed a fortnight out. */
+    const [a, b] = s.anchors.slice(0, 2).sort((x, y) => x - y);
+    const y = Number(from.slice(0, 4));
+    const m = Number(from.slice(5, 7)) - 1;
+    const eom = lastDayOf(y, m);
+    const day = dayOfMonth(from);
+    // The later anchor at or past 28 means "the end of the month", which is
+    // 28, 30 or 31 depending on where you are standing.
+    const late = b >= 28 ? eom : b;
+    if (day < late) return `${from.slice(0, 7)}-${String(Math.min(late, eom)).padStart(2, "0")}`;
+    return addMonths(from, 1, a);
+  }
+
+  return addMonths(from, 1);
+}
+
 /** Occurrences expected between now and a horizon, inclusive of both ends.
  *  A weekly series can land more than once. */
 export function dueBetween(s: Series, from: string, to: string): string[] {
   const out: string[] = [];
   let d = s.nextDue;
   // A stale series still owes its missed occurrence: catch up to `from` first.
-  while (days(d, from) > 0) d = addDays(d, Math.round(s.periodDays));
+  let guard = 0;
+  while (days(d, from) > 0 && guard++ < 500) d = advance(s, d);
   while (days(d, to) >= 0) {
     out.push(d);
-    d = addDays(d, Math.round(s.periodDays));
+    d = advance(s, d);
     if (out.length > 60) break; // nothing sane recurs this often
   }
   return out;
