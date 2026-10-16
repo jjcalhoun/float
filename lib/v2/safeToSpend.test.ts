@@ -185,3 +185,103 @@ describe("the horizon never stalls or goes backwards", () => {
     }
   });
 });
+
+describe("payday itself", () => {
+  /* The report: "on paydays the upcoming bills and safe to spend weren't
+     really updating." They were not meant to. The horizon was "the soonest
+     payday still to come", which on payday is TODAY — so nothing counted as
+     due, and the balance, freshly topped up by the deposit, read as entirely
+     spendable until midnight.
+
+     The same calendar day means two different things either side of the
+     deposit, and the deposit is the only way to tell them apart. */
+
+  const ADP_PAID_15TH: Txn[] = [
+    t("2026-08-14", 2110.64, "ADP Totalsource"),
+    t("2026-08-31", 2110.64, "ADP Totalsource"),
+    t("2026-09-15", 2110.64, "ADP Totalsource"),
+    t("2026-09-30", 2110.64, "ADP Totalsource"),
+    t("2026-10-15", 2110.64, "ADP Totalsource"), // today's deposit, landed
+  ];
+  const ADP_NOT_YET: Txn[] = ADP_PAID_15TH.slice(0, -1);
+
+  const bills = [
+    ...monthly("Citizens Bank Mortgage Payment", 583.57, "2026-06-02"),
+    ...monthly("Smithville Tele Bill", 74.99, "2026-06-05"),
+    /* One INSIDE the second half of the month, or the window proves nothing.
+       Starting in May, so the run ends at 09-20 and the next occurrence is
+       10-20 — genuinely ahead of a 10-15 "today" rather than already seen. */
+    ...monthly("Duke Energy", 142, "2026-05-20"),
+  ];
+
+  const paid = detectSeries([...ADP_PAID_15TH, ...bills]);
+  const unpaid = detectSeries([...ADP_NOT_YET, ...bills]);
+
+  it("moves to the NEXT payday once the deposit has landed", () => {
+    expect(nextPayday(paid, "2026-10-15")).toBe("2026-10-30");
+  });
+
+  it("still says today while the deposit has not arrived", () => {
+    /* Payday morning. The money is not there yet, and what is left has to
+       last until it is. Rolling the horizon forward here would count a
+       deposit that has not happened. */
+    expect(nextPayday(unpaid, "2026-10-15")).toBe("2026-10-15");
+  });
+
+  it("counts the fortnight of bills again, rather than none", () => {
+    const base = { balance: 2500, today: "2026-10-15", floor: 0, cardPayment: 0 };
+    const after = safeToSpend({ ...base, kept: paid });
+    const before = safeToSpend({ ...base, kept: unpaid });
+    expect(after.due.length).toBeGreaterThan(before.due.length);
+    expect(after.safe).toBeLessThan(before.safe);
+    expect(after.due.some((d) => d.payee.startsWith("Duke"))).toBe(true);
+  });
+
+  it("accepts a deposit released a day or two early", () => {
+    /* Banks release Friday's pay on Thursday evening. Matching only an exact
+       date would leave the horizon stuck on payday all day. */
+    const early = detectSeries([
+      ...ADP_NOT_YET,
+      t("2026-10-14", 2110.64, "ADP Totalsource"),
+      ...bills,
+    ]);
+    expect(nextPayday(early, "2026-10-15")).toBe("2026-10-30");
+  });
+
+  it("rolls forward on the day the money actually lands, not on a date", () => {
+    /* I expected the 15th here, on the reasoning that the 15th is payday and
+       the 14th is the day before it. That reasoning is wrong, and the code
+       was right: once a deposit has posted, the next deposit is a fortnight
+       away whatever the calendar says the payday is. Holding the horizon at
+       "tomorrow" while the money is already in the account is the same
+       overstatement this whole change exists to remove — a balance that has
+       to last 16 days, presented as if it had to last one.
+
+       What protects against skipping a pay period is that an occurrence is
+       only ever treated as paid once it has ARRIVED (payday <= today), so a
+       deposit cannot satisfy a payday still in the future. */
+    const early = detectSeries([
+      ...ADP_NOT_YET,
+      t("2026-10-14", 2110.64, "ADP Totalsource"),
+      ...bills,
+    ]);
+    expect(nextPayday(early, "2026-10-14")).toBe("2026-10-30");
+  });
+
+  it("does not roll forward on a deposit from the PREVIOUS payday", () => {
+    /* The grace window is three days, not a fortnight. A series last seen on
+       09-30 must not satisfy the occurrence on 10-15. */
+    expect(unpaid.find((s) => s.direction === "in")!.lastSeen).toBe("2026-09-30");
+    expect(nextPayday(unpaid, "2026-10-15")).toBe("2026-10-15");
+  });
+
+  it("leaves every other day of the cycle alone", () => {
+    for (const [today, want] of [
+      ["2026-10-16", "2026-10-30"],
+      ["2026-10-20", "2026-10-30"],
+      ["2026-11-02", "2026-11-13"],
+    ] as const) {
+      expect(nextPayday(paid, today)).toBe(want);
+    }
+  });
+});

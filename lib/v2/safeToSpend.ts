@@ -59,11 +59,39 @@ const addDays = (iso: string, n: number) =>
  *  is the common pay cycle and errs toward showing less. */
 const FALLBACK_HORIZON = 14;
 
-/** The next payday: the soonest income occurrence still to come. */
+/* A deposit can post a day or two before the date it is "for" — the bank
+   releases Friday's pay on Thursday evening. Matching a payday to a deposit
+   on exactly the same date would miss those. */
+const EARLY_GRACE = 3;
+
+/** Has the deposit for this occurrence already landed?
+ *
+ *  Only ever asked of a payday that has arrived. On payday morning the money
+ *  is not in the account and the honest horizon is today: what is left has to
+ *  last until the deposit clears. By the afternoon it HAS cleared, it is in
+ *  the balance, and a horizon of "today" turns that balance into a figure you
+ *  may spend before midnight. The same day means two different things either
+ *  side of the deposit, and the only way to tell them apart is whether the
+ *  deposit is there. */
+function alreadyDeposited(s: Series, payday: string, today: string): boolean {
+  return payday <= today && s.lastSeen >= addDays(payday, -EARLY_GRACE);
+}
+
+/** The next payday: the soonest income occurrence not yet in the bank.
+ *
+ *  Not simply the soonest occurrence still to come, because on payday itself
+ *  that is today, and a horizon of today means nothing is counted as due and
+ *  the whole balance — paycheck included — reads as spendable. Once the
+ *  deposit has actually landed, the question becomes the next fortnight. */
 export function nextPayday(kept: Series[], today: string): string | null {
   const dates = kept
     .filter((s) => s.direction === "in")
-    .map((s) => (s.nextDue >= today ? s.nextDue : dueBetween(s, today, addDays(today, 400))[0]))
+    .map((s) => {
+      /* 400 days covers an annual series; the occurrences come back in order,
+         so the first one still owing is the first that has not been paid. */
+      const upcoming = dueBetween(s, today, addDays(today, 400));
+      return upcoming.find((d) => !alreadyDeposited(s, d, today));
+    })
     .filter((d): d is string => !!d)
     .sort();
   return dates[0] ?? null;
