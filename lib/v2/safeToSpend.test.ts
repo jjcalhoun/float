@@ -285,3 +285,109 @@ describe("payday itself", () => {
     }
   });
 });
+
+describe("a bill that has already gone out", () => {
+  /* The mirror of payday. On the day the mortgage posts, the balance is
+     $583.57 lighter AND the mortgage still reads as "due today" — so it came
+     off the number twice, for one day, every month. It errs toward showing
+     less, which is the safe direction, but it is still wrong. */
+
+  const PAID_TODAY: Txn[] = [
+    ...monthly("Citizens Bank Mortgage Payment", 583.57, "2026-06-02"),
+    t("2026-11-02", -583.57, "Citizens Bank Mortgage Payment"), // posted today
+  ];
+  const NOT_YET: Txn[] = monthly("Citizens Bank Mortgage Payment", 583.57, "2026-06-02");
+
+  const withIncome = (bills: Txn[]) => detectSeries([...bills, ...ADP]);
+  const base = { balance: 3000, today: "2026-11-02", floor: 0, cardPayment: 0 };
+
+  it("is not subtracted again on the day it posts", () => {
+    const r = safeToSpend({ ...base, kept: withIncome(PAID_TODAY) });
+    expect(r.due.some((d) => d.payee.startsWith("Citizens"))).toBe(false);
+  });
+
+  it("IS subtracted while it is still only expected", () => {
+    const r = safeToSpend({ ...base, kept: withIncome(NOT_YET) });
+    expect(r.due.some((d) => d.payee.startsWith("Citizens"))).toBe(true);
+  });
+
+  it("is worth exactly the bill, not a penny more", () => {
+    const paid = safeToSpend({ ...base, kept: withIncome(PAID_TODAY) });
+    const unpaid = safeToSpend({ ...base, kept: withIncome(NOT_YET) });
+    expect(paid.safe - unpaid.safe).toBeCloseTo(583.57, 2);
+  });
+
+  it("does not suppress the NEXT occurrence as well", () => {
+    /* Marking the series paid rather than the occurrence would hide
+       December's mortgage too, and overstate the number for a month. */
+    const r = safeToSpend({
+      ...base,
+      today: "2026-11-20",
+      kept: withIncome(PAID_TODAY),
+    });
+    const all = [...r.due, ...r.soonAfter].filter((d) => d.payee.startsWith("Citizens"));
+    expect(all.map((d) => d.date)).toContain("2026-12-02");
+  });
+
+  it("never suppresses something still in the future", () => {
+    /* A payment cannot settle an occurrence that has not arrived. On 11-01
+       the mortgage is due tomorrow and must still be counted. */
+    const r = safeToSpend({ ...base, today: "2026-11-01", kept: withIncome(NOT_YET) });
+    expect(r.due.some((d) => d.payee.startsWith("Citizens"))).toBe(true);
+  });
+});
+
+describe("the grace window against a WEEKLY series", () => {
+  /* This is where a fixed three-day grace would be dangerous. Child support
+     is weekly now. With a flat ±3 days, last Friday's payment sits three
+     days before this Monday's occurrence and would mark it paid — hiding a
+     $231 obligation and OVERSTATING what is safe to spend, which is the one
+     direction that costs money. The window scales with the period. */
+
+  const weekly = (payee: string, amount: number, from: string, n: number) => {
+    const out: Txn[] = [];
+    let d = from;
+    for (let i = 0; i < n; i++) {
+      out.push(t(d, -amount, payee));
+      d = new Date(Date.parse(`${d}T00:00:00Z`) + 7 * 86400000).toISOString().slice(0, 10);
+    }
+    return out;
+  };
+
+  // Fridays through 2026-10-09, so the next occurrence is Friday 2026-10-16
+  const CS = weekly("Zelle Transfer to Sarah Brinkman Jpmw", 231, "2026-08-14", 9);
+  const kept = detectSeries([...CS, ...ADP]);
+
+  it("still counts this week's payment three days after last week's", () => {
+    const r = safeToSpend({
+      balance: 1200,
+      kept,
+      today: "2026-10-16",
+      floor: 0,
+      cardPayment: 0,
+    });
+    const cs = r.due.filter((d) => d.payee.startsWith("Zelle"));
+    expect(cs.length).toBeGreaterThanOrEqual(1);
+    expect(cs[0].date).toBe("2026-10-16");
+  });
+
+  it("drops it once this week's payment has actually gone", () => {
+    const paid = detectSeries([
+      ...CS,
+      /* Same merchant string as the rest. "Jpmx" is four characters, which
+         is too short to read as a bank reference, so varying it here made a
+         second payee and left the original series predicting 10-16 with
+         nothing paid against it. */
+      t("2026-10-16", -231, "Zelle Transfer to Sarah Brinkman Jpmw"),
+      ...ADP,
+    ]);
+    const r = safeToSpend({
+      balance: 1200,
+      kept: paid,
+      today: "2026-10-16",
+      floor: 0,
+      cardPayment: 0,
+    });
+    expect(r.due.some((d) => d.payee.startsWith("Zelle") && d.date === "2026-10-16")).toBe(false);
+  });
+});

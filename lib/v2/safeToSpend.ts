@@ -59,22 +59,33 @@ const addDays = (iso: string, n: number) =>
  *  is the common pay cycle and errs toward showing less. */
 const FALLBACK_HORIZON = 14;
 
-/* A deposit can post a day or two before the date it is "for" — the bank
-   releases Friday's pay on Thursday evening. Matching a payday to a deposit
-   on exactly the same date would miss those. */
-const EARLY_GRACE = 3;
+/* Money can move a day or two before the date it is "for": the bank releases
+   Friday's pay on Thursday evening, and an autopay set for the 15th posts on
+   the 14th. Matching only an exact date would miss all of those.
 
-/** Has the deposit for this occurrence already landed?
+   The window has to stay well short of the series' own period, or the
+   PREVIOUS occurrence starts satisfying this one — three days is harmless
+   against a monthly bill and ruinous against a weekly one, where it would
+   mark this week's child support paid because last week's went out. */
+const GRACE = (s: Series) => Math.min(3, Math.floor(s.periodDays / 3));
+
+/** Has this occurrence already moved through the account?
  *
- *  Only ever asked of a payday that has arrived. On payday morning the money
- *  is not in the account and the honest horizon is today: what is left has to
- *  last until the deposit clears. By the afternoon it HAS cleared, it is in
- *  the balance, and a horizon of "today" turns that balance into a figure you
- *  may spend before midnight. The same day means two different things either
- *  side of the deposit, and the only way to tell them apart is whether the
- *  deposit is there. */
-function alreadyDeposited(s: Series, payday: string, today: string): boolean {
-  return payday <= today && s.lastSeen >= addDays(payday, -EARLY_GRACE);
+ *  Only ever asked of a date that has ARRIVED, which is what stops a payment
+ *  satisfying an occurrence still in the future and skipping a whole cycle.
+ *
+ *  For income: on payday morning the money is not there and the honest
+ *  horizon is today, because what is left has to last until it clears. By
+ *  the afternoon it has cleared, it is in the balance, and a horizon of
+ *  "today" turns that balance into a figure you may spend before midnight.
+ *
+ *  For a bill: the balance already has the payment taken out of it, so
+ *  subtracting it again on the day it posts charges you twice.
+ *
+ *  Either way the same calendar day means two different things on either
+ *  side of the transaction, and the transaction is the only way to tell. */
+function alreadySettled(s: Series, date: string, today: string): boolean {
+  return date <= today && s.lastSeen >= addDays(date, -GRACE(s));
 }
 
 /** The next payday: the soonest income occurrence not yet in the bank.
@@ -90,18 +101,27 @@ export function nextPayday(kept: Series[], today: string): string | null {
       /* 400 days covers an annual series; the occurrences come back in order,
          so the first one still owing is the first that has not been paid. */
       const upcoming = dueBetween(s, today, addDays(today, 400));
-      return upcoming.find((d) => !alreadyDeposited(s, d, today));
+      return upcoming.find((d) => !alreadySettled(s, d, today));
     })
     .filter((d): d is string => !!d)
     .sort();
   return dates[0] ?? null;
 }
 
-function itemsBetween(kept: Series[], from: string, to: string): DueItem[] {
+function itemsBetween(
+  kept: Series[],
+  from: string,
+  to: string,
+  today: string,
+): DueItem[] {
   const out: DueItem[] = [];
   for (const s of kept) {
     if (s.direction !== "out") continue;
     for (const date of dueBetween(s, from, to)) {
+      /* Not what has already gone. On the day the mortgage posts, the
+         balance is $583 lighter AND the mortgage is still "due today" — so
+         it came off the number twice, for one day, every month. */
+      if (alreadySettled(s, date, today)) continue;
       out.push({ key: `${s.key}|${date}`, payee: s.payee, date, amount: s.amount });
     }
   }
@@ -118,14 +138,16 @@ export function safeToSpend(input: SafeInput): SafeResult {
      check it. */
   const end = horizon ?? addDays(today, FALLBACK_HORIZON);
 
-  const due = itemsBetween(kept, today, end);
+  const due = itemsBetween(kept, today, end, today);
   const dueTotal = due.reduce((s, d) => s + d.amount, 0);
 
   /* What lands just after payday.
      "Safe until the 15th" invites spending it all on the 14th, and if the
      mortgage goes out on the 16th that was a trap rather than information.
      Showing the week beyond the horizon costs a line and prevents it. */
-  const soonAfter = horizon ? itemsBetween(kept, addDays(horizon, 1), addDays(horizon, 7)) : [];
+  const soonAfter = horizon
+    ? itemsBetween(kept, addDays(horizon, 1), addDays(horizon, 7), today)
+    : [];
 
   return {
     horizon,
