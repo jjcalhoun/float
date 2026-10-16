@@ -110,7 +110,14 @@ export function FloatScreen() {
           {loading ? "—" : fmt0(r.safe)}
         </p>
         <p className="text-sm" style={{ color: "var(--color-muted)" }}>
-          {r.horizon ? `until ${shortDate(r.horizon)}` : "for the next two weeks"}
+          {/* On payday morning the horizon IS today, which "until 10/15"
+              states uselessly. It is the one day the label has to explain
+              itself: what is left has to last until the deposit clears. */}
+          {!r.horizon
+            ? "for the next two weeks"
+            : r.horizon === today
+              ? "until today's paycheck lands"
+              : `until ${shortDate(r.horizon)}`}
         </p>
       </section>
 
