@@ -138,21 +138,41 @@ export function safeToSpend(input: SafeInput): SafeResult {
   const { balance, kept, today, floor, cardPayment } = input;
 
   const horizon = nextPayday(kept, today);
-  /* Bills due ON payday count against this side of it. The money has to be
-     there in the morning, and a number that assumes the deposit arrives first
-     is a number that overstates on exactly the day you are most likely to
-     check it. */
-  const end = horizon ?? addDays(today, FALLBACK_HORIZON);
+
+  /* A bill dated ON payday is paid out of THAT payday's money.
+   *
+   * This used to count the other way, on the reasoning that the money has to
+   * be in the account that morning. But the mortgage and the ADP deposit
+   * both land on the 1st, and the autopay is drawn against the paycheck that
+   * arrives the same day — not against what survived the previous fortnight.
+   * Counting it on this side made the balance look like it had to cover a
+   * bill the next paycheck covers, and the number sagged for the last few
+   * days of every cycle for no reason you could act on.
+   *
+   * So the window stops the day BEFORE payday, and payday's own bills open
+   * the next one. Weekend shifting needs no special case: the horizon is
+   * already the shifted date, so when pay moves to Friday the 30th, a bill
+   * still dated the 31st simply falls after it.
+   *
+   * The exception is payday morning, before the deposit has landed — the
+   * horizon is today and there is no "day before" to stop at. Those bills
+   * stay counted, because they will leave the account today whether or not
+   * the deposit beats them to it, and dropping them is the one error that
+   * shows more money than exists. */
+  const atPayday = !!horizon && horizon > today;
+  const end = atPayday ? addDays(horizon!, -1) : (horizon ?? addDays(today, FALLBACK_HORIZON));
 
   const due = itemsBetween(kept, today, end, today);
   const dueTotal = due.reduce((s, d) => s + d.amount, 0);
 
-  /* What lands just after payday.
+  /* What lands from payday onwards.
      "Safe until the 15th" invites spending it all on the 14th, and if the
-     mortgage goes out on the 16th that was a trap rather than information.
-     Showing the week beyond the horizon costs a line and prevents it. */
+     mortgage goes out on the 15th or the 16th that was a trap rather than
+     information. The week beyond costs a line and prevents it — and it now
+     starts ON payday, so the bills excluded above are shown rather than
+     quietly dropped. */
   const soonAfter = horizon
-    ? itemsBetween(kept, addDays(horizon, 1), addDays(horizon, 7), today)
+    ? itemsBetween(kept, atPayday ? horizon : addDays(horizon, 1), addDays(horizon, 7), today)
     : [];
 
   return {
