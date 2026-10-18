@@ -11,18 +11,13 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { AccountEditor } from "@/components/settings/AccountEditor";
-import { BudgetEditor } from "@/components/settings/BudgetEditor";
-import { CategoryManager } from "@/components/settings/CategoryManager";
-import { ImportWizard } from "@/components/import/ImportWizard";
 import { ImportStartDateEditor } from "@/components/settings/ImportStartDateEditor";
 import { ConnectionsManager } from "@/components/settings/ConnectionsManager";
 import { DeleteAllTransactions } from "@/components/settings/DeleteAllTransactions";
-import { MonthPlanSheet } from "@/components/plan/MonthPlanSheet";
-import { currentMonthKey } from "@/lib/format";
 import { InstallButton } from "@/components/pwa/InstallButton";
 import type { Account, ThemeMode } from "@/lib/types";
 
-type Sheet = "budget" | "categories" | "import" | "importDate" | "connections" | "monthPlan" | "deleteAll" | null;
+type Sheet = "importDate" | "connections" | "deleteAll" | null;
 
 export function ProfileScreen() {
   const router = useRouter();
@@ -81,30 +76,16 @@ export function ProfileScreen() {
         </Card>
       </section>
 
-      {/* v1, still here and still working.
-          Settings above is now only what v2 uses. Everything that exists to
-          serve the donut, the ledger and the month plan sits under this
-          heading instead — budget plan, categories, month plan, CSV import —
-          so a settings list of eight items where half were inert became four
-          that all matter and four that are honestly labelled.
-
-          Nothing is deleted, and nothing here runs on its own: commitments
-          are only materialised when the Month plan sheet is opened. Hidden
-          is cheaper to undo than gone. */}
+      {/* One door, not a section.
+          Half of Settings existed to serve screens v2 never looks at, and a
+          rewrite you can still see the old app inside is a rewrite that has
+          not finished. It is all at /v1, intact. */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>
-          Original screens
-        </h2>
         <Card className="divide-y" style={{ borderColor: "var(--color-hairline)" }}>
-          <LinkRow icon="donut_small" label="Home (donut and ledger)" href="/classic" />
-          <LinkRow icon="payments" label="Debt payoff" href="/debt" />
-          <LinkRow icon="insights" label="Insights" href="/insights" />
-          <SettingRow icon="tune" label="Budget plan" onClick={() => setSheet("budget")} />
-          <SettingRow icon="category" label="Manage categories" onClick={() => setSheet("categories")} />
-          <SettingRow icon="event_note" label="Month plan" onClick={() => setSheet("monthPlan")} />
-          <SettingRow icon="upload_file" label="Import CSV" onClick={() => setSheet("import")} />
+          <LinkRow icon="history" label="Original app" href="/v1" />
         </Card>
       </section>
+
       </div>{/* left column */}
 
       {/* Accounts (right column on desktop) */}
@@ -170,11 +151,7 @@ export function ProfileScreen() {
           onClose={() => setEditingAccount(null)}
         />
       )}
-      {sheet === "budget" && <BudgetEditor onClose={() => setSheet(null)} />}
-      {sheet === "categories" && <CategoryManager onClose={() => setSheet(null)} />}
       {sheet === "connections" && <ConnectionsManager onClose={() => setSheet(null)} />}
-      {sheet === "monthPlan" && <MonthPlanSheet month={currentMonthKey()} onClose={() => setSheet(null)} />}
-      {sheet === "import" && <ImportWizard onClose={() => setSheet(null)} />}
       {sheet === "importDate" && <ImportStartDateEditor onClose={() => setSheet(null)} />}
       {sheet === "deleteAll" && <DeleteAllTransactions onClose={() => setSheet(null)} />}
     </main>

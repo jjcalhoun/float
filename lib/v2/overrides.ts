@@ -1,4 +1,4 @@
-import type { Series } from "./recurring";
+import { reschedule, type Cadence, type Series } from "./recurring";
 
 /* What you told the app, over what it worked out.
  *
@@ -14,6 +14,8 @@ import type { Series } from "./recurring";
 
 export interface Override {
   override_amount?: number | null;
+  /** replaces the detected rhythm, and with it the predicted dates */
+  override_cadence?: Cadence | null;
   /** "I'm paid up through here" — see 0024_paid_through.sql */
   paid_through?: string | null;
 }
@@ -26,10 +28,17 @@ export function applyOverrides(
   return series.map((s) => {
     const row = byKey[keyOf(s)];
     if (!row) return s;
-    const { override_amount: amount, paid_through: paidThrough } = row;
-    if (amount == null && paidThrough == null) return s;
+    const {
+      override_amount: amount,
+      override_cadence: cadence,
+      paid_through: paidThrough,
+    } = row;
+    if (amount == null && cadence == null && paidThrough == null) return s;
+    /* Cadence first: it recomputes the next due date from the last payment
+       actually seen, and the other two only decorate what comes out. */
+    const base = cadence == null ? s : reschedule(s, cadence);
     return {
-      ...s,
+      ...base,
       ...(amount == null ? {} : { amount, amountSpread: 0 }),
       ...(paidThrough == null ? {} : { paidThrough }),
     };

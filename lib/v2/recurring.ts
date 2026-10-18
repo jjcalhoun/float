@@ -512,6 +512,28 @@ export function advance(s: Series, from: string): string {
   return payroll(addMonths(from, 1));
 }
 
+export const CADENCES: Cadence[] = PERIODS.map((p) => p.cadence);
+
+/** Put a series on a different rhythm, because you know something the
+ *  history does not yet show.
+ *
+ *  Detection is backward-looking by construction, so it is always wrong for
+ *  a while after a change and right about the wrong thing in the meantime:
+ *  after child support moved from $412 a fortnight to $231 a week, ten
+ *  fortnightly payments still outvote the two weekly ones, and the series
+ *  predicts a payment that will not happen on a date it will not happen on.
+ *
+ *  The next occurrence is recomputed from the last one actually seen, so the
+ *  new rhythm starts from real history rather than from today. Anchors are
+ *  kept: moving from monthly to quarterly does not change which day of the
+ *  month a bill lands on. */
+export function reschedule(s: Series, cadence: Cadence): Series {
+  const period = PERIODS.find((p) => p.cadence === cadence);
+  if (!period || cadence === s.cadence) return s;
+  const next: Series = { ...s, cadence, periodDays: period.days };
+  return { ...next, nextDue: advance(next, s.lastSeen) };
+}
+
 /** Occurrences expected between now and a horizon, inclusive of both ends.
  *  A weekly series can land more than once. */
 export function dueBetween(s: Series, from: string, to: string): string[] {

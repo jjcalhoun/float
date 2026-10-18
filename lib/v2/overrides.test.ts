@@ -163,3 +163,66 @@ describe("paid through", () => {
     expect(s.paidThrough).toBe("2026-10-23");
   });
 });
+
+describe("a rhythm that has changed", () => {
+  /* The real row: "Zelle Transfer to Sarah Bri… $412.00 · every 2 weeks ·
+     10× · next 10/30", when it is now $231 weekly. Ten fortnightly payments
+     outvote two weekly ones for months, so detection stays confidently
+     wrong about both the amount AND the dates. */
+  const key = keyOf(cs);
+
+  it("puts the series on the new rhythm", () => {
+    const [out] = applyOverrides([cs], { [key]: { override_cadence: "weekly" } }, keyOf);
+    expect(cs.cadence).toBe("biweekly"); // the input is left alone
+    expect(out.cadence).toBe("weekly");
+    expect(out.periodDays).toBe(7);
+  });
+
+  it("moves the next due date with it, counted from the last real payment", () => {
+    const [out] = applyOverrides([cs], { [key]: { override_cadence: "weekly" } }, keyOf);
+    expect(cs.lastSeen).toBe("2026-09-25");
+    expect(out.nextDue).toBe("2026-10-02"); // a week on, not a fortnight
+  });
+
+  it("produces twice as many occurrences over the same stretch", () => {
+    const fortnightly = safeToSpend({
+      balance: 5000, kept: [cs], today: "2026-10-05", floor: 0, cardPayment: 0,
+    });
+    const weekly = safeToSpend({
+      balance: 5000,
+      kept: applyOverrides([cs], { [key]: { override_cadence: "weekly" } }, keyOf),
+      today: "2026-10-05",
+      floor: 0,
+      cardPayment: 0,
+    });
+    expect(weekly.due.length).toBeGreaterThan(fortnightly.due.length);
+  });
+
+  it("combines with an amount override, which is the actual situation", () => {
+    const [out] = applyOverrides(
+      [cs],
+      { [key]: { override_cadence: "weekly", override_amount: 231 } },
+      keyOf,
+    );
+    expect(out.cadence).toBe("weekly");
+    expect(out.amount).toBe(231);
+    expect(out.amountSpread).toBe(0);
+  });
+
+  it("is ignored when cleared, and when it matches what was detected", () => {
+    for (const o of [{}, { override_cadence: null }, { override_cadence: "biweekly" as const }]) {
+      const [out] = applyOverrides([cs], { [key]: o }, keyOf);
+      expect(out.cadence).toBe("biweekly");
+      expect(out.nextDue).toBe(cs.nextDue);
+    }
+  });
+
+  it("leaves the payee, history and confidence alone", () => {
+    /* An override says the rhythm changed, not that the past did not
+       happen. "10×" must still read 10×. */
+    const [out] = applyOverrides([cs], { [key]: { override_cadence: "weekly" } }, keyOf);
+    expect(out.hits).toBe(cs.hits);
+    expect(out.lastSeen).toBe(cs.lastSeen);
+    expect(out.payee).toBe(cs.payee);
+  });
+});
