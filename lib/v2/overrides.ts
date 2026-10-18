@@ -14,6 +14,8 @@ import type { Series } from "./recurring";
 
 export interface Override {
   override_amount?: number | null;
+  /** "I'm paid up through here" — see 0024_paid_through.sql */
+  paid_through?: string | null;
 }
 
 export function applyOverrides(
@@ -22,7 +24,14 @@ export function applyOverrides(
   keyOf: (s: Series) => string,
 ): Series[] {
   return series.map((s) => {
-    const o = byKey[keyOf(s)]?.override_amount;
-    return o == null ? s : { ...s, amount: o, amountSpread: 0 };
+    const row = byKey[keyOf(s)];
+    if (!row) return s;
+    const { override_amount: amount, paid_through: paidThrough } = row;
+    if (amount == null && paidThrough == null) return s;
+    return {
+      ...s,
+      ...(amount == null ? {} : { amount, amountSpread: 0 }),
+      ...(paidThrough == null ? {} : { paidThrough }),
+    };
   });
 }

@@ -21,6 +21,9 @@ export interface RecurringPayee {
   noted_cadence: string | null;
   /** replaces the detected amount; null keeps inferring */
   override_amount: number | null;
+  /** occurrences due on or before this are settled, however early they were
+   *  paid; null relies on posted payments alone */
+  paid_through: string | null;
 }
 
 export function useRecurringPayees() {
@@ -44,6 +47,7 @@ export function useSetRecurringPayee() {
       noted_amount?: number;
       noted_cadence?: string;
       override_amount?: number | null;
+      paid_through?: string | null;
     }) => {
       const { data: auth } = await supabase.auth.getUser();
       const user_id = auth.user?.id;
@@ -69,6 +73,7 @@ export function useSetRecurringPayee() {
           ...(input.override_amount === undefined
             ? {}
             : { override_amount: input.override_amount }),
+          ...(input.paid_through === undefined ? {} : { paid_through: input.paid_through }),
           updated_at: new Date().toISOString(),
         },
         { onConflict: "user_id,payee_key" },
