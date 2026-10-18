@@ -39,6 +39,16 @@ export function ActivityScreen() {
   const [showNew, setShowNew] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [editTxn, setEditTxn] = useState<Transaction | null>(null);
+  /* How many tiles to actually render.
+     This screen drew EVERY matching transaction, and v2 made that much
+     worse: the Float screen widens the loaded window to two years so the
+     detector can see annual bills, and Activity then rendered all of it.
+     Thousands of tiles took 25 seconds to paint on a throttled phone and
+     pushed the nav bar off the bottom of the page.
+     Filtering, searching and counting still run over everything — only the
+     drawing is capped. */
+  const PAGE = 60;
+  const [shown, setShown] = useState(PAGE);
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const deleteTxns = useDeleteTransactions();
@@ -103,6 +113,9 @@ export function ActivityScreen() {
     () => new Set(accounts.filter((a) => a.type === "savings").map((a) => a.id)),
     [accounts],
   );
+
+  // a narrowed search should start from the top, not 300 tiles down
+  useEffect(() => setShown(PAGE), [query, bucket, filters, typeParam, monthParam]);
 
   const filtered = useMemo(() => {
     return transactions.filter((t) => {
@@ -250,7 +263,7 @@ export function ActivityScreen() {
         </p>
       ) : (
         <div className="grid grid-cols-3 xl:grid-cols-4 gap-3">
-          {visible.map((t) => {
+          {visible.slice(0, shown).map((t) => {
             const isSel = selected.has(t.id);
             const isOpen = !selectMode && editTxn?.id === t.id;
             return (
@@ -292,6 +305,16 @@ export function ActivityScreen() {
               </div>
             );
           })}
+        </div>
+      )}
+      {visible.length > shown && (
+        <div className="flex flex-col items-center gap-1 pt-1">
+          <Button size="sm" variant="secondary" onClick={() => setShown((n) => n + PAGE * 4)}>
+            Show more
+          </Button>
+          <p className="text-xs" style={{ color: "var(--color-faint)" }}>
+            {shown} of {visible.length}
+          </p>
         </div>
       )}
         </div>{/* list column */}
