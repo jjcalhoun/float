@@ -514,6 +514,11 @@ export function advance(s: Series, from: string): string {
 
 export const CADENCES: Cadence[] = PERIODS.map((p) => p.cadence);
 
+/** The rhythm in days. Exported for series the user declares rather than the
+ *  detector finds — see lib/v2/manual.ts. */
+export const periodDaysFor = (c: Cadence): number =>
+  PERIODS.find((p) => p.cadence === c)?.days ?? 30.44;
+
 /** Put a series on a different rhythm, because you know something the
  *  history does not yet show.
  *

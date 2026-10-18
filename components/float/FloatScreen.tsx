@@ -23,6 +23,7 @@ import { cashAccounts, isGenerated } from "@/lib/v2/scope";
 import { useTxnWindow } from "@/components/providers";
 import { detectSeries, SUGGEST, type Series, type Txn } from "@/lib/v2/recurring";
 import { normalisePayee } from "@/lib/v2/payee";
+import { manualSeries } from "@/lib/v2/manual";
 import { safeToSpend, type DueItem } from "@/lib/v2/safeToSpend";
 import { applyOverrides } from "@/lib/v2/overrides";
 import { spendableBalance } from "@/lib/v2/balance";
@@ -79,17 +80,18 @@ export function FloatScreen() {
   }, [transactions, spendingAccounts]);
 
   // Only what you kept. A suggestion nobody acted on is not an obligation.
-  const kept = useMemo(
-    () =>
-      applyOverrides(
-        detectSeries(scoped, SUGGEST).filter(
-          (s) => decisions[normalisePayee(s.payee)]?.decision === "fixed",
-        ),
-        decisions,
-        (s) => normalisePayee(s.payee),
-      ),
-    [scoped, decisions],
-  );
+  const kept = useMemo(() => {
+    const detected = detectSeries(scoped, SUGGEST);
+    return applyOverrides(
+      [
+        ...detected.filter((s) => decisions[normalisePayee(s.payee)]?.decision === "fixed"),
+        // bills declared from Spending, which history cannot show yet
+        ...manualSeries({ decisions, txns: scoped, detected }),
+      ],
+      decisions,
+      (s) => normalisePayee(s.payee),
+    );
+  }, [scoped, decisions]);
 
   const floor = Number(settings?.v2_floor ?? 0);
   const cardPayment = Number(settings?.v2_card_payment ?? 0);

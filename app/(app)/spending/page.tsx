@@ -13,17 +13,27 @@
 
 import { useMemo, useState } from "react";
 import { useAccounts, useTransactions } from "@/hooks/useSupabaseData";
-import { useRecurringPayees } from "@/hooks/useRecurringPayees";
+import { useRecurringPayees, useSetRecurringPayee } from "@/hooks/useRecurringPayees";
 import { useSimplefinMappings } from "@/hooks/useSimplefin";
 import { useTxnWindow } from "@/components/providers";
 import { summariseSpending, type SpendGroup, type SpendTxn } from "@/lib/v2/spending";
-import { spendAccounts, isGenerated } from "@/lib/v2/scope";
+import { spendAccounts, cashAccounts, isGenerated } from "@/lib/v2/scope";
+import { CADENCES, type Cadence } from "@/lib/v2/recurring";
 import { fmt, fmt0, shortDate } from "@/lib/format";
 import { todayISO } from "@/lib/dates";
 import { Card } from "@/components/ui/Card";
 import Link from "next/link";
 
 const WINDOWS = [30, 90] as const;
+
+const CADENCE_LABEL: Record<Cadence, string> = {
+  weekly: "weekly",
+  biweekly: "every 2 weeks",
+  semimonthly: "twice a month",
+  monthly: "monthly",
+  quarterly: "quarterly",
+  annual: "yearly",
+};
 
 export default function SpendingScreen() {
   const { data: accounts = [], isLoading: la } = useAccounts();
@@ -42,6 +52,17 @@ export default function SpendingScreen() {
 
   // Synced checking and synced cards. The rule lives in lib/v2/scope.ts.
   const scopeAccounts = useMemo(() => spendAccounts(accounts, mappings), [accounts, mappings]);
+
+  /* Only a merchant paid from CHECKING can be declared recurring.
+     Screen 1 subtracts fixed costs from the bank balance, and a card
+     purchase does not touch it — the card is answered once, by the payment
+     you say you are making. Offering it here would subtract the same money
+     twice and the arithmetic would quietly stop meaning anything. */
+  const cashIds = useMemo(
+    () => new Set(cashAccounts(accounts, mappings).map((a) => a.id)),
+    [accounts, mappings],
+  );
+  const setPayee = useSetRecurringPayee();
   const accountIds = useMemo(
     () => new Set(scopeAccounts.map((a) => a.id)),
     [scopeAccounts],
@@ -81,6 +102,23 @@ export default function SpendingScreen() {
   const r = useMemo(
     () => summariseSpending({ txns, accountIds, fixedKeys, today, days }),
     [txns, accountIds, fixedKeys, today, days],
+  );
+
+  const merchantRow = (g: SpendGroup) => (
+    <MerchantRow
+      key={g.key}
+      g={g}
+      fromCash={g.txns.some((t) => cashIds.has(t.account_id))}
+      decided={!!decisions[g.key]}
+      onDeclare={(cadence: Cadence) =>
+        setPayee.mutate({
+          payee_key: g.key,
+          decision: "fixed",
+          override_cadence: cadence,
+          noted_amount: g.total / Math.max(1, g.count),
+        })
+      }
+    />
   );
 
   const loading = la || lt;
@@ -136,6 +174,7 @@ export default function SpendingScreen() {
         subtitle="the part you can change"
         groups={r.everyday}
         empty="Nothing in this window."
+        row={merchantRow}
       />
 
       <Section
@@ -147,6 +186,7 @@ export default function SpendingScreen() {
         }
         groups={r.fixed}
         empty="Nothing kept yet."
+        row={merchantRow}
       />
 
       <div className="flex justify-center gap-4 text-xs">
@@ -183,11 +223,13 @@ function Section({
   subtitle,
   groups,
   empty,
+  row,
 }: {
   title: string;
   subtitle: string;
   groups: SpendGroup[];
   empty: string;
+  row: (g: SpendGroup) => React.ReactNode;
 }) {
   return (
     <section className="space-y-2">
@@ -205,7 +247,7 @@ function Section({
             {empty}
           </p>
         ) : (
-          groups.map((g) => <MerchantRow key={g.key} g={g} />)
+          groups.map(row)
         )}
       </Card>
     </section>
@@ -216,8 +258,21 @@ function Section({
    A merchant total is the useful unit nine times in ten, but the tenth time
    the question is "$340 at Amazon in HOW many orders" — and an answer that
    cannot be opened is one you have to go and verify somewhere else. */
-function MerchantRow({ g }: { g: SpendGroup }) {
+function MerchantRow({
+  g,
+  fromCash,
+  decided,
+  onDeclare,
+}: {
+  g: SpendGroup;
+  /** paid from checking, so screen 1 could subtract it without double-counting */
+  fromCash: boolean;
+  /** already kept or dismissed on the Recurring screen */
+  decided: boolean;
+  onDeclare: (cadence: Cadence) => void;
+}) {
   const [open, setOpen] = useState(false);
+  const [declaring, setDeclaring] = useState(false);
   return (
     <div>
       <button
@@ -244,6 +299,46 @@ function MerchantRow({ g }: { g: SpendGroup }) {
       </button>
       {open && (
         <div className="pb-2">
+          {/* Declare it a bill.
+              Only from checking: screen 1 subtracts fixed costs from the bank
+              balance, and a card purchase never touches it — the card is
+              answered once, by the payment you say you are making. Offering
+              this on a card merchant would subtract the same money twice. */}
+          {!decided && fromCash && (
+            <div className="px-3 pb-2 pt-1">
+              {declaring ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs" style={{ color: "var(--color-muted)" }}>
+                    repeats
+                  </span>
+                  {CADENCES.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => onDeclare(c)}
+                      className="text-xs font-semibold px-2 py-1 rounded-md"
+                      style={{ background: "var(--color-chip-bg)", color: "var(--color-text)" }}
+                    >
+                      {CADENCE_LABEL[c]}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <button
+                  onClick={() => setDeclaring(true)}
+                  className="text-xs font-semibold"
+                  style={{ color: "var(--color-primary)" }}
+                >
+                  This is a recurring bill
+                </button>
+              )}
+            </div>
+          )}
+          {!decided && !fromCash && (
+            <p className="px-3 pb-2 pt-1 text-xs" style={{ color: "var(--color-faint)" }}>
+              Paid by card — already covered by your card payment, so it is not
+              a separate fixed cost.
+            </p>
+          )}
           {g.txns.map((t) => (
             <div key={t.id} className="px-3 py-1 flex items-baseline justify-between gap-3">
               <span className="text-xs truncate" style={{ color: "var(--color-muted)" }}>
