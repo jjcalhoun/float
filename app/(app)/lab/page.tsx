@@ -166,6 +166,18 @@ export default function RecurringLab() {
   const overridden = (s: Series) =>
     decisions[normalisePayee(s.payee)]?.override_amount != null;
 
+  /* A watermark set on screen 1 has to be visible and undoable somewhere, or
+     a bill silently stops being counted and nothing on any screen says why. */
+  const paidThrough = (s: Series) => decisions[normalisePayee(s.payee)]?.paid_through ?? null;
+  const clearPaidThrough = (s: Series) =>
+    setDecision.mutate({
+      payee_key: normalisePayee(s.payee),
+      decision: "fixed",
+      noted_amount: s.amount,
+      noted_cadence: s.cadence,
+      paid_through: null,
+    });
+
   return (
     <main className="p-4 space-y-5 pb-24">
       <div>
@@ -210,6 +222,8 @@ export default function RecurringLab() {
               onAct={() => decide(s, null)}
               onAmount={(v) => setAmount(s, v)}
               overridden={overridden(s)}
+              paidThrough={paidThrough(s)}
+              onClearPaidThrough={() => clearPaidThrough(s)}
             />
           ))}
         </Group>
@@ -225,6 +239,8 @@ export default function RecurringLab() {
               onAct={() => decide(s, null)}
               onAmount={(v) => setAmount(s, v)}
               overridden={overridden(s)}
+              paidThrough={paidThrough(s)}
+              onClearPaidThrough={() => clearPaidThrough(s)}
             />
           ))}
         </Group>
@@ -360,6 +376,8 @@ function Row({
   onDismiss,
   onAmount,
   overridden,
+  paidThrough,
+  onClearPaidThrough,
   dim,
 }: {
   s: Series;
@@ -369,6 +387,9 @@ function Row({
   /** kept rows only: type over the inferred amount; null resumes inference */
   onAmount?: (v: number | null) => void;
   overridden?: boolean;
+  /** "paid up through" watermark set from screen 1, if any */
+  paidThrough?: string | null;
+  onClearPaidThrough?: () => void;
   dim?: boolean;
 }) {
   const label = action === "keep" ? "Keep" : action === "remove" ? "Remove" : "Undo";
@@ -409,6 +430,19 @@ function Row({
             </>
           )}
         </p>
+        {paidThrough && (
+          <p className="text-xs" style={{ color: "var(--color-positive)" }}>
+            paid through {shortDate(paidThrough)}
+            {onClearPaidThrough && (
+              <>
+                {" "}·{" "}
+                <button onClick={onClearPaidThrough} className="underline">
+                  undo
+                </button>
+              </>
+            )}
+          </p>
+        )}
       </div>
       {onDismiss && (
         <button

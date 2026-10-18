@@ -17,13 +17,13 @@ import {
   useUpdateSettings,
   useAccountBalances,
 } from "@/hooks/useSupabaseData";
-import { useRecurringPayees } from "@/hooks/useRecurringPayees";
+import { useRecurringPayees, useSetRecurringPayee } from "@/hooks/useRecurringPayees";
 import { useSimplefinMappings } from "@/hooks/useSimplefin";
 import { cashAccounts, isGenerated } from "@/lib/v2/scope";
 import { useTxnWindow } from "@/components/providers";
 import { detectSeries, SUGGEST, type Series, type Txn } from "@/lib/v2/recurring";
 import { normalisePayee } from "@/lib/v2/payee";
-import { safeToSpend } from "@/lib/v2/safeToSpend";
+import { safeToSpend, type DueItem } from "@/lib/v2/safeToSpend";
 import { applyOverrides } from "@/lib/v2/overrides";
 import { spendableBalance } from "@/lib/v2/balance";
 import { fmt, fmt0, shortDate } from "@/lib/format";
@@ -35,6 +35,7 @@ export function FloatScreen() {
   const { data: accounts = [], isLoading: la } = useAccounts();
   const { data: transactions = [], isLoading: lt } = useTransactions();
   const { data: decisions = {} } = useRecurringPayees();
+  const setPayee = useSetRecurringPayee();
   const { data: mappings = [] } = useSimplefinMappings();
   const { data: settings } = useSettings();
   const updateSettings = useUpdateSettings();
@@ -170,17 +171,17 @@ export function FloatScreen() {
             </p>
           ) : (
             r.due.map((d) => (
-              <div key={d.key} className="px-3 py-2.5 flex items-center justify-between gap-3">
-                <span className="text-sm truncate" style={{ color: "var(--color-text)" }}>
-                  {d.payee}
-                </span>
-                <span className="text-xs shrink-0" style={{ color: "var(--color-faint)" }}>
-                  {shortDate(d.date)}
-                </span>
-                <span className="font-figure text-sm shrink-0" style={{ color: "var(--color-text)" }}>
-                  {fmt(d.amount)}
-                </span>
-              </div>
+              <DueRow
+                key={d.key}
+                item={d}
+                onPaid={() =>
+                  setPayee.mutate({
+                    payee_key: normalisePayee(d.payee),
+                    decision: "fixed",
+                    paid_through: d.date,
+                  })
+                }
+              />
             ))
           )}
         </Card>
@@ -209,6 +210,50 @@ export function FloatScreen() {
         </Link>
       </div>
     </main>
+  );
+}
+
+/* A bill you have already paid, early.
+ *
+ * The detector cannot work this out: a single Zelle for $462 on the 16th
+ * covering both the 16th and the 23rd leaves the 23rd looking unpaid,
+ * because on the 23rd nothing will post. So it is simply asked — one tap,
+ * recorded as "paid through this date", undone on the Recurring screen.
+ *
+ * The amount is NOT read as two payments of $231. v1 did that, and the
+ * script to repair its guesses is still in the repo. */
+function DueRow({ item, onPaid }: { item: DueItem; onPaid: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <div className="px-3 py-2.5 flex items-center justify-between gap-3">
+      <span className="text-sm truncate" style={{ color: "var(--color-text)" }}>
+        {item.payee}
+      </span>
+      <span className="text-xs shrink-0" style={{ color: "var(--color-faint)" }}>
+        {shortDate(item.date)}
+      </span>
+      <span className="font-figure text-sm shrink-0" style={{ color: "var(--color-text)" }}>
+        {fmt(item.amount)}
+      </span>
+      {confirming ? (
+        <button
+          onClick={onPaid}
+          className="text-xs font-semibold px-2 py-1 rounded-md shrink-0"
+          style={{ background: "var(--color-primary)", color: "#fff" }}
+        >
+          Paid
+        </button>
+      ) : (
+        <button
+          onClick={() => setConfirming(true)}
+          aria-label={`Mark ${item.payee} paid`}
+          className="shrink-0 material-symbols-outlined"
+          style={{ fontSize: 18, color: "var(--color-faint)" }}
+        >
+          check_circle
+        </button>
+      )}
+    </div>
   );
 }
 

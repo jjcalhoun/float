@@ -63,6 +63,10 @@ export interface Series {
   /** 0–1. Occurrences, gap consistency and amount stability. */
   confidence: number;
   txnIds: string[];
+  /** Set by the user layer (lib/v2/overrides.ts), never by detection:
+   *  occurrences due on or before this are settled however early they were
+   *  paid. Detection has no way to know about a payment made in advance. */
+  paidThrough?: string | null;
 }
 
 export interface DetectOptions {

@@ -99,3 +99,67 @@ describe("overriding income", () => {
     expect(after.horizon).toBe(before.horizon);
   });
 });
+
+describe("paid through", () => {
+  /* The real case: one Zelle for $462 on the 16th covering both the 16th and
+     the 23rd. The 16th drops out on its own once the payment posts, but
+     nothing will ever post on the 23rd, so without this it stays "due" and
+     $231 is subtracted twice. */
+  const base = { balance: 2000, today: "2026-10-18", floor: 0, cardPayment: 0 };
+  const key = keyOf(cs);
+
+  it("settles an occurrence that nothing will ever post against", () => {
+    // the control, or "every remaining date is later" passes on an empty list
+    const before = safeToSpend({ ...base, kept: series }).due.filter((d) =>
+      d.payee.startsWith("Zelle"),
+    );
+    expect(before.some((d) => d.date <= "2026-10-23")).toBe(true);
+
+    const covered = applyOverrides(series, { [key]: { paid_through: "2026-10-23" } }, keyOf);
+    const owed = safeToSpend({ ...base, kept: covered }).due.filter((d) =>
+      d.payee.startsWith("Zelle"),
+    );
+    expect(owed.every((d) => d.date > "2026-10-23")).toBe(true);
+  });
+
+  it("reaches into the future, unlike every other settled test", () => {
+    const plain = safeToSpend({ ...base, kept: series });
+    const covered = safeToSpend({
+      ...base,
+      kept: applyOverrides(series, { [key]: { paid_through: "2026-10-23" } }, keyOf),
+    });
+    expect(covered.safe).toBeGreaterThan(plain.safe);
+  });
+
+  it("does not touch occurrences after the watermark", () => {
+    const covered = applyOverrides(series, { [key]: { paid_through: "2026-10-23" } }, keyOf);
+    const s = covered.find((x) => keyOf(x) === key)!;
+    const later = safeToSpend({ ...base, today: "2026-11-01", kept: covered });
+    expect(later.due.concat(later.soonAfter).some((d) => d.payee === s.payee)).toBe(true);
+  });
+
+  it("does not touch any other payee", () => {
+    const covered = applyOverrides(series, { [key]: { paid_through: "2099-01-01" } }, keyOf);
+    const others = covered.filter((s) => keyOf(s) !== key);
+    expect(others.every((s) => s.paidThrough == null)).toBe(true);
+  });
+
+  it("is cleared by null, restoring the schedule", () => {
+    const cleared = applyOverrides(series, { [key]: { paid_through: null } }, keyOf);
+    expect(cleared.find((x) => keyOf(x) === key)!.paidThrough).toBeUndefined();
+    const r = safeToSpend({ ...base, kept: cleared });
+    const plain = safeToSpend({ ...base, kept: series });
+    expect(r.safe).toBe(plain.safe);
+  });
+
+  it("coexists with an amount override", () => {
+    const both = applyOverrides(
+      series,
+      { [key]: { override_amount: 231, paid_through: "2026-10-23" } },
+      keyOf,
+    );
+    const s = both.find((x) => keyOf(x) === key)!;
+    expect(s.amount).toBe(231);
+    expect(s.paidThrough).toBe("2026-10-23");
+  });
+});

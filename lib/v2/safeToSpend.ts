@@ -85,6 +85,12 @@ const GRACE = (s: Series) => Math.min(3, Math.floor(s.periodDays / 3));
  *  Either way the same calendar day means two different things on either
  *  side of the transaction, and the transaction is the only way to tell. */
 function alreadySettled(s: Series, date: string, today: string): boolean {
+  /* Paid in advance. Neither the schedule nor the posted payments can know
+     about this: one Zelle for $462 on the 16th covering the 16th and the
+     23rd leaves the 23rd looking unpaid, because on the 23rd nothing will
+     post. Unlike the test below, this one reaches into the FUTURE — being
+     covered until a date is exactly what it means. */
+  if (s.paidThrough && date <= s.paidThrough) return true;
   return date <= today && s.lastSeen >= addDays(date, -GRACE(s));
 }
 

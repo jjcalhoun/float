@@ -75,21 +75,22 @@ export function ProfileScreen() {
               you look at — but it decides what screen 1 subtracts, so it has
               to be findable from somewhere other than the foot of a screen. */}
           <LinkRow icon="repeat" label="Recurring bills and income" href="/lab" />
-          <SettingRow icon="tune" label="Budget plan" onClick={() => setSheet("budget")} />
-          <SettingRow icon="category" label="Manage categories" onClick={() => setSheet("categories")} />
           <SettingRow icon="account_balance" label="Bank connections" onClick={() => setSheet("connections")} />
-          <SettingRow icon="event_note" label="Month plan" onClick={() => setSheet("monthPlan")} />
-          <SettingRow icon="upload_file" label="Import CSV" onClick={() => setSheet("import")} />
           <SettingRow icon="event" label="Import start date" onClick={() => setSheet("importDate")} />
           <SettingRow icon="delete_sweep" label="Delete all transactions" onClick={() => setSheet("deleteAll")} />
         </Card>
       </section>
 
-      {/* The v1 screens, still here.
-          They came off the nav when the home screen became the number, but
-          the donut, the ledger, the month plan and the debt payoff plan all
-          still work and still know things about this account that v2 does
-          not model. Hidden is not the same as deleted. */}
+      {/* v1, still here and still working.
+          Settings above is now only what v2 uses. Everything that exists to
+          serve the donut, the ledger and the month plan sits under this
+          heading instead — budget plan, categories, month plan, CSV import —
+          so a settings list of eight items where half were inert became four
+          that all matter and four that are honestly labelled.
+
+          Nothing is deleted, and nothing here runs on its own: commitments
+          are only materialised when the Month plan sheet is opened. Hidden
+          is cheaper to undo than gone. */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>
           Original screens
@@ -98,6 +99,10 @@ export function ProfileScreen() {
           <LinkRow icon="donut_small" label="Home (donut and ledger)" href="/classic" />
           <LinkRow icon="payments" label="Debt payoff" href="/debt" />
           <LinkRow icon="insights" label="Insights" href="/insights" />
+          <SettingRow icon="tune" label="Budget plan" onClick={() => setSheet("budget")} />
+          <SettingRow icon="category" label="Manage categories" onClick={() => setSheet("categories")} />
+          <SettingRow icon="event_note" label="Month plan" onClick={() => setSheet("monthPlan")} />
+          <SettingRow icon="upload_file" label="Import CSV" onClick={() => setSheet("import")} />
         </Card>
       </section>
       </div>{/* left column */}
