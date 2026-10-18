@@ -34,6 +34,7 @@ import {
   type Txn,
 } from "@/lib/v2/recurring";
 import { normalisePayee, displayPayee } from "@/lib/v2/payee";
+import { manualSeries } from "@/lib/v2/manual";
 import { applyOverrides } from "@/lib/v2/overrides";
 import { fmt, fmt0, shortDate } from "@/lib/format";
 import { todayISO } from "@/lib/dates";
@@ -118,11 +119,17 @@ export default function RecurringLab() {
     [transactions, spending, creditIds],
   );
 
-  const series = useMemo(
-     () =>
-       applyOverrides(detectSeries(scoped, SUGGEST), decisions, (s) => normalisePayee(s.payee)),
-     [scoped, decisions],
-   );
+  const series = useMemo(() => {
+    const detected = detectSeries(scoped, SUGGEST);
+    /* Declared bills sit alongside detected ones, and are edited and removed
+       by exactly the same controls — the list should not care which of the
+       two a row came from. */
+    const all = [...detected, ...manualSeries({ decisions, txns: scoped, detected })];
+    return applyOverrides(all, decisions, (s) => normalisePayee(s.payee));
+  }, [scoped, decisions]);
+
+  // manualSeries stamps its own keys, so this needs no second detection pass
+  const declared = (s: Series) => s.key.endsWith("|manual");
 
   /* Income is kept apart from bills throughout.
      They do different jobs: bills are subtracted from the balance, while
@@ -245,6 +252,7 @@ export default function RecurringLab() {
               overridden={overridden(s)}
               onCadence={(c) => setCadence(s, c)}
               cadenceOverridden={cadenceOverridden(s)}
+              declared={declared(s)}
               paidThrough={paidThrough(s)}
               onClearPaidThrough={() => clearPaidThrough(s)}
             />
@@ -264,6 +272,7 @@ export default function RecurringLab() {
               overridden={overridden(s)}
               onCadence={(c) => setCadence(s, c)}
               cadenceOverridden={cadenceOverridden(s)}
+              declared={declared(s)}
               paidThrough={paidThrough(s)}
               onClearPaidThrough={() => clearPaidThrough(s)}
             />
@@ -442,6 +451,7 @@ function Row({
   overridden,
   onCadence,
   cadenceOverridden,
+  declared,
   paidThrough,
   onClearPaidThrough,
   dim,
@@ -456,6 +466,8 @@ function Row({
   /** kept rows only: put it on a different rhythm; null resumes inference */
   onCadence?: (c: Cadence | null) => void;
   cadenceOverridden?: boolean;
+  /** declared from Spending rather than found in the history */
+  declared?: boolean;
   /** "paid up through" watermark set from screen 1, if any */
   paidThrough?: string | null;
   onClearPaidThrough?: () => void;
@@ -495,7 +507,10 @@ function Row({
           ) : (
             <span>{CADENCE_LABEL[s.cadence]}</span>
           )}
-          <span>· {s.hits}× · next {shortDate(s.nextDue)}</span>
+          <span>
+            · {declared ? `added by you · ${s.hits} seen` : `${s.hits}×`} · next{" "}
+            {shortDate(s.nextDue)}
+          </span>
           {!overridden && s.amountSpread > 0.08 && (
             <> · varies ±{Math.round(s.amountSpread * 100)}%</>
           )}

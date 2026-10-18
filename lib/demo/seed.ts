@@ -266,6 +266,21 @@ export function buildSeed(todayIso: string): DemoTables {
       const id = addTxn({ account_id: "acc-chk", date, amount: amt, merchant: pick(rnd, MERCHANTS.groceries), reviewed: rev });
       if (rev) addSplit(id, "cat-groceries", "needs", amt);
     }
+
+    /* Paid once, from checking, and no rhythm to find — the case the
+       detector cannot help with and "this is a recurring bill" exists for.
+       Without it every checking merchant in the demo is a grocery store the
+       detector already knows, and the feature has nothing to act on. */
+    if (dayNum(todayIso) - dayNum(date) === 12) {
+      const id = addTxn({
+        account_id: "acc-chk",
+        date,
+        amount: -80,
+        merchant: "Hometown Lawn Care",
+        reviewed: true,
+      });
+      addSplit(id, "cat-housing", "needs", -80);
+    }
     if (rnd() < 0.42) {
       const amt = -round2(9 + rnd() * 34);
       const id = addTxn({ account_id: "acc-cc", date, amount: amt, merchant: pick(rnd, MERCHANTS.dining), reviewed: rev });
