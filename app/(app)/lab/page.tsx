@@ -24,7 +24,15 @@ import { useRecurringPayees, useSetRecurringPayee } from "@/hooks/useRecurringPa
 import { useSimplefinMappings } from "@/hooks/useSimplefin";
 import { cashAccounts, isGenerated } from "@/lib/v2/scope";
 import { useTxnWindow } from "@/components/providers";
-import { detectSeries, isStale, SUGGEST, type Series, type Txn } from "@/lib/v2/recurring";
+import {
+  detectSeries,
+  isStale,
+  SUGGEST,
+  CADENCES,
+  type Cadence,
+  type Series,
+  type Txn,
+} from "@/lib/v2/recurring";
 import { normalisePayee, displayPayee } from "@/lib/v2/payee";
 import { applyOverrides } from "@/lib/v2/overrides";
 import { fmt, fmt0, shortDate } from "@/lib/format";
@@ -168,6 +176,19 @@ export default function RecurringLab() {
 
   /* A watermark set on screen 1 has to be visible and undoable somewhere, or
      a bill silently stops being counted and nothing on any screen says why. */
+  /* The rhythm, when history has not caught up with reality yet. Ten
+     fortnightly payments outvote two weekly ones for months. */
+  const setCadence = (s: Series, override_cadence: Cadence | null) =>
+    setDecision.mutate({
+      payee_key: normalisePayee(s.payee),
+      decision: "fixed",
+      noted_amount: s.amount,
+      noted_cadence: s.cadence,
+      override_cadence,
+    });
+  const cadenceOverridden = (s: Series) =>
+    decisions[normalisePayee(s.payee)]?.override_cadence != null;
+
   const paidThrough = (s: Series) => decisions[normalisePayee(s.payee)]?.paid_through ?? null;
   const clearPaidThrough = (s: Series) =>
     setDecision.mutate({
@@ -222,6 +243,8 @@ export default function RecurringLab() {
               onAct={() => decide(s, null)}
               onAmount={(v) => setAmount(s, v)}
               overridden={overridden(s)}
+              onCadence={(c) => setCadence(s, c)}
+              cadenceOverridden={cadenceOverridden(s)}
               paidThrough={paidThrough(s)}
               onClearPaidThrough={() => clearPaidThrough(s)}
             />
@@ -239,6 +262,8 @@ export default function RecurringLab() {
               onAct={() => decide(s, null)}
               onAmount={(v) => setAmount(s, v)}
               overridden={overridden(s)}
+              onCadence={(c) => setCadence(s, c)}
+              cadenceOverridden={cadenceOverridden(s)}
               paidThrough={paidThrough(s)}
               onClearPaidThrough={() => clearPaidThrough(s)}
             />
@@ -329,6 +354,45 @@ function Group({
   );
 }
 
+/* The rhythm, as a choice rather than a verdict.
+   Showing the current cadence as the selected option — and "detected" as a
+   way back — keeps this a correction of something rather than a second
+   schedule to maintain. */
+function CadenceField({
+  value,
+  overridden,
+  onChange,
+}: {
+  value: Cadence;
+  overridden: boolean;
+  onChange: (c: Cadence | null) => void;
+}) {
+  /* When overridden, `value` IS the override, so it has to appear among the
+     options or the select has nothing to select — and the escape hatch is
+     labelled "use detected" rather than naming a cadence, because the
+     detected one is whatever history says today. */
+  return (
+    <select
+      aria-label="how often"
+      value={overridden ? value : "__detected"}
+      onChange={(e) =>
+        onChange(e.target.value === "__detected" ? null : (e.target.value as Cadence))
+      }
+      className="bg-transparent outline-none text-xs underline"
+      style={{ color: overridden ? "var(--color-primary)" : "var(--color-faint)" }}
+    >
+      <option value="__detected">
+        {overridden ? "use detected" : CADENCE_LABEL[value]}
+      </option>
+      {CADENCES.map((c) => (
+        <option key={c} value={c}>
+          {CADENCE_LABEL[c]}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 /* The inferred figure, typed over in place.
    Showing the current number as the field's value — rather than an empty box —
    means an override is a correction of something, and clearing it back to the
@@ -376,6 +440,8 @@ function Row({
   onDismiss,
   onAmount,
   overridden,
+  onCadence,
+  cadenceOverridden,
   paidThrough,
   onClearPaidThrough,
   dim,
@@ -387,6 +453,9 @@ function Row({
   /** kept rows only: type over the inferred amount; null resumes inference */
   onAmount?: (v: number | null) => void;
   overridden?: boolean;
+  /** kept rows only: put it on a different rhythm; null resumes inference */
+  onCadence?: (c: Cadence | null) => void;
+  cadenceOverridden?: boolean;
   /** "paid up through" watermark set from screen 1, if any */
   paidThrough?: string | null;
   onClearPaidThrough?: () => void;
@@ -416,8 +485,17 @@ function Row({
             </span>
           )}
         </div>
-        <p className="text-xs" style={{ color: "var(--color-faint)" }}>
-          {CADENCE_LABEL[s.cadence]} · {s.hits}× · next {shortDate(s.nextDue)}
+        <p className="text-xs flex items-center gap-1 flex-wrap" style={{ color: "var(--color-faint)" }}>
+          {onCadence ? (
+            <CadenceField
+              value={s.cadence}
+              overridden={!!cadenceOverridden}
+              onChange={onCadence}
+            />
+          ) : (
+            <span>{CADENCE_LABEL[s.cadence]}</span>
+          )}
+          <span>· {s.hits}× · next {shortDate(s.nextDue)}</span>
           {!overridden && s.amountSpread > 0.08 && (
             <> · varies ±{Math.round(s.amountSpread * 100)}%</>
           )}

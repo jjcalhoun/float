@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
+import type { Cadence } from "@/lib/v2/recurring";
 
 /* The user's verdict on each merchant. See 0020_recurring_payees.sql.
  *
@@ -21,6 +22,9 @@ export interface RecurringPayee {
   noted_cadence: string | null;
   /** replaces the detected amount; null keeps inferring */
   override_amount: number | null;
+  /** replaces the detected rhythm; null keeps inferring. The column has a
+   *  check constraint, so the narrow type is safe at this boundary. */
+  override_cadence: Cadence | null;
   /** occurrences due on or before this are settled, however early they were
    *  paid; null relies on posted payments alone */
   paid_through: string | null;
@@ -47,6 +51,7 @@ export function useSetRecurringPayee() {
       noted_amount?: number;
       noted_cadence?: string;
       override_amount?: number | null;
+      override_cadence?: Cadence | null;
       paid_through?: string | null;
     }) => {
       const { data: auth } = await supabase.auth.getUser();
@@ -73,6 +78,9 @@ export function useSetRecurringPayee() {
           ...(input.override_amount === undefined
             ? {}
             : { override_amount: input.override_amount }),
+          ...(input.override_cadence === undefined
+            ? {}
+            : { override_cadence: input.override_cadence }),
           ...(input.paid_through === undefined ? {} : { paid_through: input.paid_through }),
           updated_at: new Date().toISOString(),
         },
