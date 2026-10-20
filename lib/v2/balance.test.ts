@@ -70,3 +70,46 @@ describe("which balance wins", () => {
     expect(r.pending).toBe(55);
   });
 });
+
+describe("showing both figures", () => {
+  /* Straight from the account on Monday: Chase reported $1,268.42 posted
+     and $0.00 available, and the screen said "available balance · $1,268
+     pending" — which reads as though the app has lost the money. */
+  const CHECKING = [{ id: "chk", live_balance: 1268.42, live_available_balance: 0 }];
+
+  it("keeps the posted figure so the two can be shown side by side", () => {
+    const r = spendableBalance(CHECKING);
+    expect(r.total).toBe(0);
+    expect(r.posted).toBeCloseTo(1268.42, 2);
+  });
+
+  it("says when pending is clamped and therefore a lower bound", () => {
+    /* A bank floors available at zero. Once pending exceeds the balance,
+       posted minus available can only see as much of it as there was money
+       to cover — so the true figure is unknown and larger. */
+    expect(spendableBalance(CHECKING).clamped).toBe(true);
+  });
+
+  it("is not clamped when available is simply lower", () => {
+    const r = spendableBalance([{ id: "sav", live_balance: 560, live_available_balance: 538.49 }]);
+    expect(r.clamped).toBe(false);
+    expect(r.pending).toBeCloseTo(21.51, 2);
+    expect(r.posted).toBe(560);
+  });
+
+  it("is not clamped when the account is genuinely empty", () => {
+    expect(spendableBalance([{ id: "chk", live_balance: 0, live_available_balance: 0 }]).clamped).toBe(false);
+  });
+
+  it("reports posted alongside the other two sources too", () => {
+    expect(spendableBalance([{ id: "a", live_balance: 100 }]).posted).toBe(100);
+    expect(spendableBalance([{ id: "a" }], { a: 70 }).posted).toBe(70);
+  });
+
+  it("still never prefers posted when available is available", () => {
+    /* The tempting fix for "my bank says $138 and the app says $0" is to
+       fall back to posted. That is the direction that hides an overdraft,
+       and this account has just had one. */
+    expect(spendableBalance(CHECKING).total).toBe(0);
+  });
+});

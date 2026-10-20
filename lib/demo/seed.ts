@@ -352,5 +352,32 @@ export function buildSeed(todayIso: string): DemoTables {
     });
   }
 
+  /* Live balances, as the bank would report them.
+     Without these the demo falls back to balances computed from
+     transactions, which is the path a real connected account never takes —
+     so the available-vs-posted line and the staleness notice, the two parts
+     of this screen most likely to confuse, were invisible in the demo. A
+     little is held as pending, which is the normal state of a card-using
+     checking account. */
+  const held: Record<string, number> = { "acc-chk": 84.31, "acc-sav": 0 };
+  const balances = new Map(
+    t.accounts.map((a) => {
+      const sum = t.transactions
+        .filter((x) => x.account_id === a.id && (x.date as string) <= todayIso)
+        .reduce((n, x) => n + Number(x.amount), 0);
+      return [a.id as string, Number(a.starting_balance) + sum];
+    }),
+  );
+  t.accounts = t.accounts.map((a) => {
+    const posted = round2(balances.get(a.id as string) ?? 0);
+    const pending = held[a.id as string] ?? 0;
+    return {
+      ...a,
+      live_balance: posted,
+      live_available_balance: a.type === "credit" ? null : round2(posted - pending),
+      live_balance_at: `${todayIso}T11:00:00Z`,
+    };
+  });
+
   return t;
 }
