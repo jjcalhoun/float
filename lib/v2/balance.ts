@@ -35,8 +35,19 @@ export interface SpendableBalance {
   total: number;
   /** the weakest source any account fell back to */
   source: BalanceSource;
-  /** posted minus available: held by the bank, not yet settled */
+  /** posted minus available: held by the bank, not yet settled.
+   *
+   *  A LOWER BOUND, not a measurement. Banks clamp available at zero, so
+   *  when pending exceeds the posted balance this reports only as much of it
+   *  as the subtraction can see. Presenting it as the exact figure is how
+   *  "$1,268 pending" came to be shown against a $1,268 balance — arithmetic
+   *  reported as a fact from the bank. */
   pending: number;
+  /** the posted total, for showing beside the available one */
+  posted: number;
+  /** available is zero while something has posted — so pending is clamped
+   *  and the true figure is unknown */
+  clamped: boolean;
 }
 
 const RANK: Record<BalanceSource, number> = { available: 0, posted: 1, computed: 2 };
@@ -47,21 +58,31 @@ export function spendableBalance(
 ): SpendableBalance {
   let total = 0;
   let pending = 0;
+  let posted = 0;
+  let clamped = false;
   let source: BalanceSource = "available";
 
   for (const a of accounts) {
     let used: BalanceSource;
     if (a.live_available_balance != null) {
-      total += Number(a.live_available_balance);
+      const avail = Number(a.live_available_balance);
+      total += avail;
       used = "available";
       if (a.live_balance != null) {
-        pending += Number(a.live_balance) - Number(a.live_available_balance);
+        pending += Number(a.live_balance) - avail;
+        posted += Number(a.live_balance);
+        if (avail === 0 && Number(a.live_balance) !== 0) clamped = true;
+      } else {
+        posted += avail;
       }
     } else if (a.live_balance != null) {
       total += Number(a.live_balance);
+      posted += Number(a.live_balance);
       used = "posted";
     } else {
-      total += Number(computed[a.id] ?? 0);
+      const c = Number(computed[a.id] ?? 0);
+      total += c;
+      posted += c;
       used = "computed";
     }
     if (RANK[used] > RANK[source]) source = used;
@@ -70,5 +91,5 @@ export function spendableBalance(
   // With nothing to read, claiming "available" would overstate what is known.
   if (accounts.length === 0) source = "computed";
 
-  return { total, source, pending };
+  return { total, source, pending, posted, clamped };
 }

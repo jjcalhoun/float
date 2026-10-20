@@ -18,7 +18,7 @@ import {
   useAccountBalances,
 } from "@/hooks/useSupabaseData";
 import { useRecurringPayees, useSetRecurringPayee } from "@/hooks/useRecurringPayees";
-import { useSimplefinMappings } from "@/hooks/useSimplefin";
+import { useSimplefinMappings, useSyncSimplefin } from "@/hooks/useSimplefin";
 import { cashAccounts, isGenerated } from "@/lib/v2/scope";
 import { useTxnWindow } from "@/components/providers";
 import { detectSeries, SUGGEST, type Series, type Txn } from "@/lib/v2/recurring";
@@ -60,7 +60,10 @@ export function FloatScreen() {
      available and a number that disagrees with the bank app is worth
      nothing however it was derived. */
   const { data: computed = {} } = useAccountBalances();
-  const { total: balance, source, pending } = spendableBalance(spendingAccounts, computed);
+  const { total: balance, source, pending, posted, clamped } = spendableBalance(
+    spendingAccounts,
+    computed,
+  );
   const balanceAt = spendingAccounts
     .map((a) => a.live_balance_at)
     .filter(Boolean)
@@ -139,13 +142,34 @@ export function FloatScreen() {
         <Line label="due before then" value={-r.dueTotal} />
         {cardPayment > 0 && <Line label="card payment" value={-cardPayment} />}
         {floor > 0 && <Line label="floor" value={-floor} dim />}
+        {/* Both figures, when they differ.
+            Showing only "available: $0" against a bank app reading $1,268
+            looks like the app has lost track of the money. The gap is the
+            whole story — what has posted, and how much of it the bank has
+            not released — so it is said outright rather than left to be
+            inferred from a single number that disagrees with Chase. */}
         <p className="text-xs pt-1" style={{ color: "var(--color-faint)" }}>
-          {source === "computed"
-            ? "computed from transactions — no live figure from the bank yet"
-            : source === "posted"
-              ? `posted balance${asOf} — this bank publishes no available balance, so pending charges are not deducted`
-              : `available balance${asOf}${pending > 0.005 ? ` · ${fmt0(pending)} pending` : ""}`}
+          {source === "computed" ? (
+            "computed from transactions — no live figure from the bank yet"
+          ) : source === "posted" ? (
+            `posted balance${asOf} — this bank publishes no available balance, so pending charges are not deducted`
+          ) : (
+            <>
+              available to spend{asOf}
+              {Math.abs(posted - balance) > 0.005 && (
+                <>
+                  {" "}· {fmt0(posted)} posted,{" "}
+                  {/* "at least", because a bank clamps available at zero: once
+                      pending exceeds the balance the subtraction can only see
+                      as much of it as there was money to cover. */}
+                  {clamped ? "at least " : ""}
+                  {fmt0(pending)} not yet cleared
+                </>
+              )}
+            </>
+          )}
         </p>
+        <StaleNotice at={balanceAt} />
       </Card>
 
       <Card className="p-4 space-y-3">
@@ -273,6 +297,37 @@ function DueRow({ item, onPaid }: { item: DueItem; onPaid: () => void }) {
         </button>
       )}
     </div>
+  );
+}
+
+/* How old this is, and a way to fix it.
+ *
+ * The sync runs once a day at six in the morning. A transfer made on Monday
+ * evening is therefore invisible until Tuesday, and the screen said nothing
+ * about that — it showed a confident figure from sixteen hours ago while the
+ * bank app two taps away showed another. The age is the missing context, and
+ * a refresh is the missing verb. */
+function StaleNotice({ at }: { at?: string | null }) {
+  const sync = useSyncSimplefin();
+  if (!at) return null;
+  const hours = (Date.now() - Date.parse(at)) / 3_600_000;
+  if (hours < 6 && !sync.isPending) return null;
+
+  const age =
+    hours < 48 ? `${Math.round(hours)} hours ago` : `${Math.round(hours / 24)} days ago`;
+
+  return (
+    <p className="text-xs flex items-center gap-2" style={{ color: "var(--color-muted)" }}>
+      <span>last checked {age}</span>
+      <button
+        onClick={() => sync.mutate(undefined)}
+        disabled={sync.isPending}
+        className="underline font-semibold"
+        style={{ color: "var(--color-primary)" }}
+      >
+        {sync.isPending ? "checking…" : "check now"}
+      </button>
+    </p>
   );
 }
 
