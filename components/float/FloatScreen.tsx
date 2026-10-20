@@ -316,18 +316,45 @@ function StaleNotice({ at }: { at?: string | null }) {
   const age =
     hours < 48 ? `${Math.round(hours)} hours ago` : `${Math.round(hours / 24)} days ago`;
 
+  /* What the bank said back, including when it said no.
+     The sync collects per-connection errors and hands them to the caller;
+     this button threw them away, so a connection that needs reauthorising
+     looked exactly like a successful check that found nothing. A refresh
+     you cannot tell has failed is worse than no refresh button. */
+  const failed = sync.isError
+    ? sync.error instanceof Error
+      ? sync.error.message
+      : "could not reach the bank"
+    : sync.data?.errors?.length
+      ? sync.data.errors[0]
+      : null;
+
   return (
-    <p className="text-xs flex items-center gap-2" style={{ color: "var(--color-muted)" }}>
-      <span>last checked {age}</span>
-      <button
-        onClick={() => sync.mutate(undefined)}
-        disabled={sync.isPending}
-        className="underline font-semibold"
-        style={{ color: "var(--color-primary)" }}
-      >
-        {sync.isPending ? "checking…" : "check now"}
-      </button>
-    </p>
+    <div className="text-xs space-y-1">
+      <p className="flex items-center gap-2" style={{ color: "var(--color-muted)" }}>
+        <span>last checked {age}</span>
+        <button
+          onClick={() => sync.mutate(undefined)}
+          disabled={sync.isPending}
+          className="underline font-semibold"
+          style={{ color: "var(--color-primary)" }}
+        >
+          {sync.isPending ? "checking…" : "check now"}
+        </button>
+      </p>
+      {failed && (
+        <p style={{ color: "var(--color-danger)" }}>
+          {failed} — reconnect under Profile → Bank connections.
+        </p>
+      )}
+      {!failed && sync.isSuccess && (
+        <p style={{ color: "var(--color-muted)" }}>
+          {sync.data.balancesUpdated > 0 || sync.data.inserted > 0
+            ? `updated · ${sync.data.inserted} new`
+            : "the bank reported nothing new"}
+        </p>
+      )}
+    </div>
   );
 }
 
