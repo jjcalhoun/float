@@ -466,3 +466,70 @@ describe("the grace window against a WEEKLY series", () => {
     expect(r.due.some((d) => d.payee.startsWith("Zelle") && d.date === "2026-10-16")).toBe(false);
   });
 });
+
+describe("a bill that was due and has not gone out", () => {
+  /* The overdraft. Safe-to-spend read about $400 across the weekend and the
+     account overdrew on Monday morning when "several recurring payments"
+     landed. They had been counted on Friday, vanished on Saturday, and were
+     still coming.
+
+     A due date passing is not a payment. The window started at today, so an
+     occurrence dated yesterday dropped out of the maths whether or not the
+     money had left — and weekends make that systematic, because a bill
+     dated Saturday posts on Monday. */
+
+  const CS: Txn[] = [
+    "2026-08-14","2026-08-21","2026-08-28","2026-09-04","2026-09-11",
+    "2026-09-18","2026-09-25","2026-10-02","2026-10-09",
+  ].map((d) => t(d, -231, "Zelle Transfer to Sarah Brinkman Jpm99cyjirem"));
+
+  const kept = detectSeries([...CS, ...ADP]);
+  const base = { balance: 400, floor: 0, cardPayment: 0 };
+
+  it("is still counted the day after it was due", () => {
+    const fri = safeToSpend({ ...base, kept, today: "2026-10-16" });
+    const sat = safeToSpend({ ...base, kept, today: "2026-10-17" });
+    expect(fri.due.some((d) => d.date === "2026-10-16")).toBe(true);
+    expect(sat.due.some((d) => d.date === "2026-10-16")).toBe(true);
+  });
+
+  it("does not let the number jump overnight for no reason", () => {
+    /* This is the whole bug in one assertion: the balance did not change
+       and no payment was made, so the figure must not improve. */
+    const fri = safeToSpend({ ...base, kept, today: "2026-10-16" });
+    const sat = safeToSpend({ ...base, kept, today: "2026-10-17" });
+    const sun = safeToSpend({ ...base, kept, today: "2026-10-18" });
+    expect(sat.safe).toBe(fri.safe);
+    expect(sun.safe).toBe(fri.safe);
+  });
+
+  it("is marked overdue rather than quietly listed", () => {
+    const sat = safeToSpend({ ...base, kept, today: "2026-10-17" });
+    const late = sat.due.find((d) => d.date === "2026-10-16")!;
+    expect(late.overdue).toBe(true);
+    expect(sat.due.find((d) => d.date === "2026-10-23")?.overdue).toBe(false);
+  });
+
+  it("stops counting it the moment it posts", () => {
+    const paid = detectSeries([
+      ...CS,
+      t("2026-10-19", -231, "Zelle Transfer to Sarah Brinkman Jpm99cyjirem"),
+      ...ADP,
+    ]);
+    const r = safeToSpend({ ...base, kept: paid, today: "2026-10-19" });
+    expect(r.due.some((d) => d.date === "2026-10-16")).toBe(false);
+  });
+
+  it("gives up after a bounded time rather than subtracting for ever", () => {
+    /* A bill you have genuinely stopped paying must not haunt the number.
+       The lookback is one period for a weekly series. */
+    const r = safeToSpend({ ...base, kept, today: "2026-10-26" });
+    expect(r.due.some((d) => d.date === "2026-10-16")).toBe(false);
+  });
+
+  it("never counts the same occurrence twice across the two lists", () => {
+    const r = safeToSpend({ ...base, kept, today: "2026-10-17" });
+    const keys = [...r.due, ...r.soonAfter].map((d) => d.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+});

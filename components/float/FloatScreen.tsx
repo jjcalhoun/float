@@ -241,8 +241,15 @@ function DueRow({ item, onPaid }: { item: DueItem; onPaid: () => void }) {
       <span className="text-sm truncate" style={{ color: "var(--color-text)" }}>
         {item.payee}
       </span>
-      <span className="text-xs shrink-0" style={{ color: "var(--color-faint)" }}>
-        {shortDate(item.date)}
+      {/* An overdue row is the one thing here you might act on, so it says
+          so. It is still subtracted — a due date passing is not a payment —
+          but silently subtracting it would leave you wondering why the
+          number is lower than the dates suggest. */}
+      <span
+        className="text-xs shrink-0"
+        style={{ color: item.overdue ? "var(--color-danger)" : "var(--color-faint)" }}
+      >
+        {item.overdue ? `${shortDate(item.date)} · late` : shortDate(item.date)}
       </span>
       <span className="font-figure text-sm shrink-0" style={{ color: "var(--color-text)" }}>
         {fmt(item.amount)}
