@@ -182,6 +182,28 @@ describe("a bill due ON payday", () => {
     const r = safeToSpend({ ...base, kept: onPaydayKept });
     expect(r.due.filter((d) => r.soonAfter.some((a) => a.key === d.key))).toEqual([]);
   });
+
+  it("excludes a bill dated ON the shifted payday, from the real screen", () => {
+    /* Straight off the Float screen on 2026-10-20: pay is the 15th and the
+       last day, 10-31 is a Saturday so the horizon is Friday 10-30, and two
+       bills — the savings transfer and child support — are dated 10-30
+       itself. They were appearing in "Coming up" for the 10-15 cycle.
+
+       The weekend-shift test above puts its bill on the 31st, which lands
+       after the horizon for the ordinary reason. This one is ON the horizon,
+       which is the case that actually needs the window to stop a day short,
+       and the one the screenshot showed. */
+    const kept30 = detectSeries([
+      ...ADP,
+      ...monthly("Online Transfer to Savings", 100, "2026-05-30"),
+      ...monthly("Zelle Transfer to Sarah Brinkman Jpm99cyjirem", 231, "2026-05-30"),
+    ]);
+    const r = safeToSpend({ balance: 1500, kept: kept30, today: "2026-10-20", floor: 0, cardPayment: 0 });
+    expect(r.horizon).toBe("2026-10-30");
+    expect(r.due.filter((d) => d.date === "2026-10-30")).toEqual([]);
+    expect(r.soonAfter.filter((d) => d.date === "2026-10-30")).toHaveLength(2);
+    expect(r.soonAfterTotal).toBeCloseTo(331, 2);
+  });
 });
 
 describe("payday lands early at a weekend", () => {
