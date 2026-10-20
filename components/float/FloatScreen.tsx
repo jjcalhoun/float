@@ -9,7 +9,7 @@
  * There are no months in it. The arithmetic lives in lib/v2/safeToSpend.ts.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useAccounts,
   useTransactions,
@@ -24,6 +24,7 @@ import { useTxnWindow } from "@/components/providers";
 import { detectSeries, SUGGEST, type Series, type Txn } from "@/lib/v2/recurring";
 import { normalisePayee } from "@/lib/v2/payee";
 import { manualSeries } from "@/lib/v2/manual";
+import { memoByTxns } from "@/lib/v2/cache";
 import { safeToSpend, type DueItem } from "@/lib/v2/safeToSpend";
 import { applyOverrides } from "@/lib/v2/overrides";
 import { spendableBalance } from "@/lib/v2/balance";
@@ -43,7 +44,10 @@ export function FloatScreen() {
   const { ensureSince } = useTxnWindow();
   const today = todayISO();
 
-  useMemo(() => {
+  /* Widening the loaded window is a state update, so it belongs in an
+     effect — doing it inside useMemo set state during render, which React
+     has to unpick with an extra pass on every mount of this screen. */
+  useEffect(() => {
     const since = new Date();
     since.setMonth(since.getMonth() - 24);
     ensureSince(since.toISOString().slice(0, 10));
@@ -65,6 +69,8 @@ export function FloatScreen() {
   const cards = useMemo(() => accounts.filter((a) => a.type === "credit"), [accounts]);
   const cardOwed = cards.reduce((s, a) => s + Math.max(0, -Number(a.live_balance ?? 0)), 0);
 
+  const scopeKey = spendingAccounts.map((a) => a.id).sort().join(",");
+
   const scoped: Txn[] = useMemo(() => {
     const ids = new Set(spendingAccounts.map((a) => a.id));
     return transactions
@@ -81,7 +87,11 @@ export function FloatScreen() {
 
   // Only what you kept. A suggestion nobody acted on is not an obligation.
   const kept = useMemo(() => {
-    const detected = detectSeries(scoped, SUGGEST);
+    /* Shared with the Recurring screen through the transactions array, so
+       switching between the two does not re-run detection. */
+    const detected = memoByTxns(transactions, `detect|float|${scopeKey}`, () =>
+      detectSeries(scoped, SUGGEST),
+    );
     return applyOverrides(
       [
         ...detected.filter((s) => decisions[normalisePayee(s.payee)]?.decision === "fixed"),
@@ -91,7 +101,7 @@ export function FloatScreen() {
       decisions,
       (s) => normalisePayee(s.payee),
     );
-  }, [scoped, decisions]);
+  }, [scoped, decisions, transactions, scopeKey]);
 
   const floor = Number(settings?.v2_floor ?? 0);
   const cardPayment = Number(settings?.v2_card_payment ?? 0);

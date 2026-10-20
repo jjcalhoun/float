@@ -11,7 +11,7 @@
  * deliberately do not on screen 1.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAccounts, useTransactions } from "@/hooks/useSupabaseData";
 import { useRecurringPayees, useSetRecurringPayee } from "@/hooks/useRecurringPayees";
 import { useSimplefinMappings } from "@/hooks/useSimplefin";
@@ -44,7 +44,10 @@ export default function SpendingScreen() {
   const [days, setDays] = useState<number>(30);
   const today = todayISO();
 
-  useMemo(() => {
+  /* Widening the loaded window is a state update, so it belongs in an
+     effect — doing it inside useMemo set state during render, which React
+     has to unpick with an extra pass on every mount of this screen. */
+  useEffect(() => {
     const since = new Date();
     since.setMonth(since.getMonth() - 6);
     ensureSince(since.toISOString().slice(0, 10));

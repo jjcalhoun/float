@@ -119,15 +119,90 @@ describe("the day after payday", () => {
 });
 
 describe("a bill due ON payday", () => {
-  it("counts against this side of it", () => {
-    /* The money has to be in the account that morning. A number that assumes
-       the deposit clears first overstates on exactly the day you are most
-       likely to look at it. */
-    const r = safeToSpend({ balance: 2000, kept, today: "2026-10-08", floor: 300, cardPayment: 0 });
-    const onPayday = r.due.filter((d) => d.date === r.horizon);
-    const after = r.soonAfter.filter((d) => d.date === r.horizon);
-    expect(after).toEqual([]);
-    expect(onPayday.every((d) => r.due.includes(d))).toBe(true);
+  /* This block used to assert the opposite, and it passed for two weeks
+     without testing anything: the fixture had no bill landing on a payday,
+     so both sides of the comparison were empty lists. A test that describes
+     a rule it cannot observe is worse than no test, because it reads like
+     cover. Hence the fixture below, which puts a bill on the 15th on
+     purpose. */
+  const PAYDAY_BILL = monthly("Citizens Bank Mortgage Payment", 583.57, "2026-05-15");
+  const onPaydayKept = detectSeries([...ADP, ...PAYDAY_BILL]);
+  const base = { balance: 3000, today: "2026-10-08", floor: 0, cardPayment: 0 };
+
+  it("is paid out of that payday's money, not this fortnight's", () => {
+    /* The autopay is drawn against the paycheck arriving the same morning,
+       not against what survived the previous fortnight. */
+    const r = safeToSpend({ ...base, kept: onPaydayKept });
+    expect(r.horizon).toBe("2026-10-15");
+    expect(r.due.some((d) => d.date === "2026-10-15")).toBe(false);
+  });
+
+  it("is shown in the week after, not silently dropped", () => {
+    const r = safeToSpend({ ...base, kept: onPaydayKept });
+    expect(r.soonAfter.some((d) => d.date === "2026-10-15")).toBe(true);
+    expect(r.soonAfterTotal).toBeGreaterThan(0);
+  });
+
+  it("does not reduce the number at all", () => {
+    const noBill = safeToSpend({ ...base, kept: detectSeries(ADP) });
+    const withBill = safeToSpend({ ...base, kept: onPaydayKept });
+    expect(withBill.safe).toBe(noBill.safe);
+  });
+
+  it("still falls on the far side when payday moves to the Friday", () => {
+    /* 2026-10-31 is a Saturday, so pay lands on the 30th. A bill dated the
+       31st is then simply after the horizon — the weekend rule needs no
+       special case here, because the horizon is already the shifted date. */
+    const endOfMonth = detectSeries([
+      ...ADP,
+      ...monthly("Department of Education", 221.33, "2026-05-31"),
+    ]);
+    const r = safeToSpend({ ...base, today: "2026-10-20", kept: endOfMonth });
+    expect(r.horizon).toBe("2026-10-30");
+    expect(r.due.some((d) => d.payee.startsWith("Department"))).toBe(false);
+    expect(r.soonAfter.some((d) => d.payee.startsWith("Department"))).toBe(true);
+  });
+
+  it("is still counted on payday MORNING, before the deposit lands", () => {
+    /* The horizon is today and there is no day before it to stop at. The
+       bill leaves the account today whether or not the deposit beats it,
+       and dropping it is the one error that shows more money than exists. */
+    const r = safeToSpend({ ...base, today: "2026-10-15", kept: onPaydayKept });
+    expect(r.horizon).toBe("2026-10-15");
+    expect(r.due.some((d) => d.date === "2026-10-15")).toBe(true);
+  });
+
+  it("still counts a bill the day BEFORE payday", () => {
+    const eve = detectSeries([...ADP, ...monthly("Verizon", 73.74, "2026-05-14")]);
+    const r = safeToSpend({ ...base, kept: eve });
+    expect(r.due.some((d) => d.date === "2026-10-14")).toBe(true);
+  });
+
+  it("never counts the same occurrence on both sides", () => {
+    const r = safeToSpend({ ...base, kept: onPaydayKept });
+    expect(r.due.filter((d) => r.soonAfter.some((a) => a.key === d.key))).toEqual([]);
+  });
+
+  it("excludes a bill dated ON the shifted payday, from the real screen", () => {
+    /* Straight off the Float screen on 2026-10-20: pay is the 15th and the
+       last day, 10-31 is a Saturday so the horizon is Friday 10-30, and two
+       bills — the savings transfer and child support — are dated 10-30
+       itself. They were appearing in "Coming up" for the 10-15 cycle.
+
+       The weekend-shift test above puts its bill on the 31st, which lands
+       after the horizon for the ordinary reason. This one is ON the horizon,
+       which is the case that actually needs the window to stop a day short,
+       and the one the screenshot showed. */
+    const kept30 = detectSeries([
+      ...ADP,
+      ...monthly("Online Transfer to Savings", 100, "2026-05-30"),
+      ...monthly("Zelle Transfer to Sarah Brinkman Jpm99cyjirem", 231, "2026-05-30"),
+    ]);
+    const r = safeToSpend({ balance: 1500, kept: kept30, today: "2026-10-20", floor: 0, cardPayment: 0 });
+    expect(r.horizon).toBe("2026-10-30");
+    expect(r.due.filter((d) => d.date === "2026-10-30")).toEqual([]);
+    expect(r.soonAfter.filter((d) => d.date === "2026-10-30")).toHaveLength(2);
+    expect(r.soonAfterTotal).toBeCloseTo(331, 2);
   });
 });
 

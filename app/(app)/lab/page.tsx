@@ -18,7 +18,7 @@
  * figure. Clearing the override resumes inference.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTransactions, useAccounts } from "@/hooks/useSupabaseData";
 import { useRecurringPayees, useSetRecurringPayee } from "@/hooks/useRecurringPayees";
 import { useSimplefinMappings } from "@/hooks/useSimplefin";
@@ -35,6 +35,7 @@ import {
 } from "@/lib/v2/recurring";
 import { normalisePayee, displayPayee } from "@/lib/v2/payee";
 import { manualSeries } from "@/lib/v2/manual";
+import { memoByTxns } from "@/lib/v2/cache";
 import { applyOverrides } from "@/lib/v2/overrides";
 import { fmt, fmt0, shortDate } from "@/lib/format";
 import { todayISO } from "@/lib/dates";
@@ -58,7 +59,10 @@ export default function RecurringLab() {
   const [showDismissed, setShowDismissed] = useState(false);
   const today = todayISO();
 
-  useMemo(() => {
+  /* Widening the loaded window is a state update, so it belongs in an
+     effect — doing it inside useMemo set state during render, which React
+     has to unpick with an extra pass on every mount of this screen. */
+  useEffect(() => {
     const since = new Date();
     since.setMonth(since.getMonth() - 24);
     ensureSince(since.toISOString().slice(0, 10));
@@ -85,6 +89,8 @@ export default function RecurringLab() {
     () => new Set(accounts.filter((a) => a.type === "credit").map((a) => a.id)),
     [accounts],
   );
+
+  const scopeKey = [...spending].sort().join(",") + "|" + [...creditIds].sort().join(",");
 
   const scoped: Txn[] = useMemo(
     () =>
@@ -120,13 +126,16 @@ export default function RecurringLab() {
   );
 
   const series = useMemo(() => {
-    const detected = detectSeries(scoped, SUGGEST);
+    // same cache the Float screen uses; the key covers the different scoping
+    const detected = memoByTxns(transactions, `detect|lab|${scopeKey}`, () =>
+      detectSeries(scoped, SUGGEST),
+    );
     /* Declared bills sit alongside detected ones, and are edited and removed
        by exactly the same controls — the list should not care which of the
        two a row came from. */
     const all = [...detected, ...manualSeries({ decisions, txns: scoped, detected })];
     return applyOverrides(all, decisions, (s) => normalisePayee(s.payee));
-  }, [scoped, decisions]);
+  }, [scoped, decisions, transactions, scopeKey]);
 
   // manualSeries stamps its own keys, so this needs no second detection pass
   const declared = (s: Series) => s.key.endsWith("|manual");
