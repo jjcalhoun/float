@@ -36,6 +36,8 @@ export interface DueItem {
   payee: string;
   date: string;
   amount: number;
+  /** due date has passed and nothing has posted against it yet */
+  overdue?: boolean;
 }
 
 export interface SafeResult {
@@ -114,21 +116,39 @@ export function nextPayday(kept: Series[], today: string): string | null {
   return dates[0] ?? null;
 }
 
+/* How far back to keep looking for money that was due and has not gone.
+ *
+ * Bounded, and bounded by the series' own period, or an obligation you have
+ * genuinely stopped paying would be subtracted from the number for ever. Ten
+ * days covers a weekend plus a holiday, which is the case this exists for;
+ * for a weekly bill it is one period, because a second unpaid week is a
+ * different conversation from a payment that has not cleared yet. */
+const lookbackFor = (s: Series) => Math.min(10, Math.max(1, Math.round(s.periodDays)));
+
 function itemsBetween(
   kept: Series[],
   from: string,
   to: string,
   today: string,
+  /** also carry forward occurrences already past but not yet paid */
+  includeOverdue = false,
 ): DueItem[] {
   const out: DueItem[] = [];
   for (const s of kept) {
     if (s.direction !== "out") continue;
-    for (const date of dueBetween(s, from, to)) {
+    const start = includeOverdue ? addDays(from, -lookbackFor(s)) : from;
+    for (const date of dueBetween(s, start, to)) {
       /* Not what has already gone. On the day the mortgage posts, the
          balance is $583 lighter AND the mortgage is still "due today" — so
          it came off the number twice, for one day, every month. */
       if (alreadySettled(s, date, today)) continue;
-      out.push({ key: `${s.key}|${date}`, payee: s.payee, date, amount: s.amount });
+      out.push({
+        key: `${s.key}|${date}`,
+        payee: s.payee,
+        date,
+        amount: s.amount,
+        overdue: date < today,
+      });
     }
   }
   return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
@@ -162,7 +182,21 @@ export function safeToSpend(input: SafeInput): SafeResult {
   const atPayday = !!horizon && horizon > today;
   const end = atPayday ? addDays(horizon!, -1) : (horizon ?? addDays(today, FALLBACK_HORIZON));
 
-  const due = itemsBetween(kept, today, end, today);
+  /* Looking BACK as well as forward.
+   *
+   * A due date passing is not a payment. The window used to start at today,
+   * so an occurrence dated yesterday simply vanished from the maths whether
+   * or not the money had left — and the number jumped up by its amount.
+   *
+   * Weekends made that systematic rather than rare: a bill dated Saturday
+   * posts on Monday, so from Sunday morning it was due in the past, gone
+   * from the window, and still coming. Safe-to-spend read a few hundred
+   * dollars high for two days and then the account overdrew on Monday.
+   *
+   * So an occurrence counts until something actually settles it. The
+   * lookback is bounded per series, since a bill you have genuinely stopped
+   * paying must not be subtracted for ever. */
+  const due = itemsBetween(kept, today, end, today, true);
   const dueTotal = due.reduce((s, d) => s + d.amount, 0);
 
   /* What lands from payday onwards.

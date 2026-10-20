@@ -544,7 +544,12 @@ export function reschedule(s: Series, cadence: Cadence): Series {
 export function dueBetween(s: Series, from: string, to: string): string[] {
   const out: string[] = [];
   let d = s.nextDue;
-  // A stale series still owes its missed occurrence: catch up to `from` first.
+  /* Skip forward to the window. Note what this does NOT do: a missed
+     occurrence before `from` is discarded, not carried. An earlier comment
+     here claimed the opposite, and safe-to-spend believed it — so a bill
+     whose due date had passed without posting dropped out of the number
+     entirely. Callers that care about unpaid past occurrences widen `from`
+     themselves and check whether each one settled; see itemsBetween. */
   let guard = 0;
   while (days(d, from) > 0 && guard++ < 500) d = advance(s, d);
   while (days(d, to) >= 0) {
