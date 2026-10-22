@@ -68,6 +68,8 @@ export interface SpendingInput {
   accountIds: Set<string>;
   /** normalised payees kept as fixed costs on the Recurring screen */
   fixedKeys: Set<string>;
+  /** "same payee as" links you asserted: key → the key it counts under */
+  aliases?: Record<string, string>;
   today: string;
   days: number;
 }
@@ -77,7 +79,7 @@ const addDays = (iso: string, n: number) =>
   new Date(Date.parse(`${iso}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
 
 export function summariseSpending(input: SpendingInput): SpendingResult {
-  const { txns, accountIds, fixedKeys, today, days } = input;
+  const { txns, accountIds, fixedKeys, today, days, aliases } = input;
   const from = addDays(today, -days);
 
   const inWindow = txns.filter(
@@ -103,7 +105,11 @@ export function summariseSpending(input: SpendingInput): SpendingResult {
     s.n += 1;
     sums.set(k, s);
   }
-  const alias = aliasMap([...sums].map(([key, s]) => ({ key, amount: s.sum / s.n })));
+  const alias = aliasMap(
+    [...sums].map(([key, s]) => ({ key, amount: s.sum / s.n })),
+    undefined,
+    aliases,
+  );
   const keyOf = (t: SpendTxn) => {
     const k = rawKey(t);
     return alias.get(k) ?? k;
