@@ -35,6 +35,7 @@ import {
 } from "@/lib/v2/recurring";
 import { normalisePayee, displayPayee } from "@/lib/v2/payee";
 import { manualSeries } from "@/lib/v2/manual";
+import { usePayeeAliases } from "@/hooks/usePayeeAliases";
 import { memoByTxns } from "@/lib/v2/cache";
 import { applyOverrides } from "@/lib/v2/overrides";
 import { fmt, fmt0, shortDate } from "@/lib/format";
@@ -54,6 +55,7 @@ export default function RecurringLab() {
   const { data: transactions = [], isLoading } = useTransactions();
   const { data: accounts = [] } = useAccounts();
   const { data: decisions = {} } = useRecurringPayees();
+  const { data: aliases = {} } = usePayeeAliases();
   const setDecision = useSetRecurringPayee();
   const { ensureSince } = useTxnWindow();
   const [showDismissed, setShowDismissed] = useState(false);
@@ -127,15 +129,19 @@ export default function RecurringLab() {
 
   const series = useMemo(() => {
     // same cache the Float screen uses; the key covers the different scoping
-    const detected = memoByTxns(transactions, `detect|lab|${scopeKey}`, () =>
-      detectSeries(scoped, SUGGEST),
+    /* The alias set is part of the cache key: asserting "same as" changes
+       what detection returns, and a memo that ignored it would serve the
+       answer from before the link. */
+    const aliasKey = Object.entries(aliases).sort().flat().join(",");
+    const detected = memoByTxns(transactions, `detect|lab|${scopeKey}|${aliasKey}`, () =>
+      detectSeries(scoped, { ...SUGGEST, aliases }),
     );
     /* Declared bills sit alongside detected ones, and are edited and removed
        by exactly the same controls — the list should not care which of the
        two a row came from. */
     const all = [...detected, ...manualSeries({ decisions, txns: scoped, detected })];
     return applyOverrides(all, decisions, (s) => normalisePayee(s.payee));
-  }, [scoped, decisions, transactions, scopeKey]);
+  }, [scoped, decisions, transactions, scopeKey, aliases]);
 
   // manualSeries stamps its own keys, so this needs no second detection pass
   const declared = (s: Series) => s.key.endsWith("|manual");

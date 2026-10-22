@@ -61,6 +61,20 @@ export function displayPayee(raw: string | null | undefined): string {
   return words.join(" ");
 }
 
+/** A normalised key, made presentable.
+ *
+ *  displayPayee reconstructs casing from the bank's original string, so it
+ *  is no use for a key that has already been normalised — it hands back
+ *  "ellettsville uti" unchanged, and the alias picker duly offered chips
+ *  labelled "aldi". Where the real description is still to hand, prefer it;
+ *  this is for the cases where only the key survives. */
+export function prettyKey(key: string): string {
+  return key
+    .split(" ")
+    .map((w) => (w.length <= 2 ? w : w[0].toUpperCase() + w.slice(1)))
+    .join(" ");
+}
+
 /* One bill, two names.
  *
  * Chase posts some ACH debits with an originator prefix, so the same
@@ -126,7 +140,16 @@ const sameTokens = (a: Set<string>, b: Set<string>) =>
  *  Equality used to fall through both tests: isSubset demands the smaller
  *  set be strictly smaller, so the easiest case — same payee, same words,
  *  one routing prefix — was the one case this could not see. */
-export function aliasMap(payees: AliasInput[], amountTolerance = 0.05): Map<string, string> {
+export function aliasMap(
+  payees: AliasInput[],
+  amountTolerance = 0.05,
+  /* Links you asserted yourself, from payee key to the key it belongs under.
+     Applied LAST and unconditionally: no amount test, no resemblance test,
+     no requirement that either name appear in this batch at all. The
+     automatic rules are a guess about what the bank meant; this is you
+     telling it. */
+  manual: Record<string, string> = {},
+): Map<string, string> {
   const toks = new Map(payees.map((p) => [p.key, distinctive(p.key)]));
   const out = new Map<string, string>();
 
@@ -149,6 +172,10 @@ export function aliasMap(payees: AliasInput[], amountTolerance = 0.05): Map<stri
       out.set(a.key, b.key);
       break;
     }
+  }
+
+  for (const [from, to] of Object.entries(manual)) {
+    if (from && to && from !== to) out.set(from, to);
   }
 
   // a → b → c collapses to a → c, so a three-way split lands in one place.

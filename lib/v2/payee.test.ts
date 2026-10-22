@@ -196,3 +196,65 @@ describe("the same payee with a routing prefix", () => {
     for (const [from, to] of m) expect(from).not.toBe(to);
   });
 });
+
+describe("a link you asserted yourself", () => {
+  /* The automatic rules read one name inside another, or the same words
+     under a routing prefix. A bank can rename "Ellettsville Uti" to "Town
+     of Ellettsville", which shares nothing — and then a kept bill silently
+     stops being counted and the number goes UP. */
+  const OLD = normalisePayee("Ellettsville Uti");
+  const NEW = normalisePayee("Town of Ellettsville");
+
+  it("merges names with nothing whatever in common", () => {
+    const auto = aliasMap([{ key: OLD, amount: 101 }, { key: NEW, amount: 81 }]);
+    expect(auto.size).toBe(0); // no resemblance to find
+
+    const m = aliasMap(
+      [{ key: OLD, amount: 101 }, { key: NEW, amount: 81 }],
+      undefined,
+      { [NEW]: OLD },
+    );
+    expect(m.get(NEW)).toBe(OLD);
+  });
+
+  it("needs no agreement on the amounts", () => {
+    const m = aliasMap([{ key: OLD, amount: 5 }, { key: NEW, amount: 5000 }], undefined, {
+      [NEW]: OLD,
+    });
+    expect(m.get(NEW)).toBe(OLD);
+  });
+
+  it("works for a name that is not in this batch at all", () => {
+    /* A bill that has not been charged inside the window still has to keep
+       its link, or the link evaporates in any view narrow enough not to
+       include it. */
+    const m = aliasMap([{ key: OLD, amount: 101 }], undefined, { [NEW]: OLD });
+    expect(m.get(NEW)).toBe(OLD);
+  });
+
+  it("overrides an automatic match that disagrees", () => {
+    /* Target was folded into Target Optical by resemblance; saying
+       otherwise has to win. */
+    const t = normalisePayee("Target");
+    const o = normalisePayee("Target Optical");
+    const elsewhere = normalisePayee("Some Other Bill");
+    const m = aliasMap(
+      [{ key: t, amount: 100 }, { key: o, amount: 100 }],
+      undefined,
+      { [t]: elsewhere },
+    );
+    expect(m.get(t)).toBe(elsewhere);
+  });
+
+  it("collapses a chain so everything lands in one place", () => {
+    const a = "aaa", b = "bbb", c = "ccc";
+    const m = aliasMap([], undefined, { [a]: b, [b]: c });
+    expect(m.get(a)).toBe(c);
+    expect(m.get(b)).toBe(c);
+  });
+
+  it("ignores a self-link rather than looping", () => {
+    const m = aliasMap([{ key: OLD, amount: 1 }], undefined, { [OLD]: OLD });
+    expect(m.has(OLD)).toBe(false);
+  });
+});

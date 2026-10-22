@@ -14,9 +14,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAccounts, useTransactions } from "@/hooks/useSupabaseData";
 import { useRecurringPayees, useSetRecurringPayee } from "@/hooks/useRecurringPayees";
+import { usePayeeAliases, useSetPayeeAlias } from "@/hooks/usePayeeAliases";
 import { useSimplefinMappings } from "@/hooks/useSimplefin";
 import { useTxnWindow } from "@/components/providers";
 import { summariseSpending, type SpendGroup, type SpendTxn } from "@/lib/v2/spending";
+import { prettyKey } from "@/lib/v2/payee";
 import { spendAccounts, cashAccounts, isGenerated } from "@/lib/v2/scope";
 import { CADENCES, type Cadence } from "@/lib/v2/recurring";
 import { fmt, fmt0, shortDate } from "@/lib/format";
@@ -66,6 +68,8 @@ export default function SpendingScreen() {
     [accounts, mappings],
   );
   const setPayee = useSetRecurringPayee();
+  const { data: aliases = {} } = usePayeeAliases();
+  const setAlias = useSetPayeeAlias();
   const accountIds = useMemo(
     () => new Set(scopeAccounts.map((a) => a.id)),
     [scopeAccounts],
@@ -103,9 +107,31 @@ export default function SpendingScreen() {
   );
 
   const r = useMemo(
-    () => summariseSpending({ txns, accountIds, fixedKeys, today, days }),
-    [txns, accountIds, fixedKeys, today, days],
+    () => summariseSpending({ txns, accountIds, fixedKeys, today, days, aliases }),
+    [txns, accountIds, fixedKeys, today, days, aliases],
   );
+
+  /* What a merchant can be declared the same as: the bills you have kept.
+     Linking to an arbitrary other merchant would mostly be a mistake, and
+     the case this exists for is always "my kept bill arrived under a new
+     name". */
+  const linkTargets = useMemo(
+    () =>
+      Object.values(decisions)
+        .filter((d) => d?.decision === "fixed")
+        .map((d) => d!.payee_key)
+        .sort(),
+    [decisions],
+  );
+
+  /* The bank's own description where this window has one, so the picker
+     offers "Aldi" rather than the normalised "aldi". */
+  const labels = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const grp of [...r.fixed, ...r.everyday]) m[grp.key] = grp.label;
+    return m;
+  }, [r]);
+  const labelOf = (k: string) => labels[k] ?? prettyKey(k);
 
   const merchantRow = (g: SpendGroup) => (
     <MerchantRow
@@ -113,6 +139,13 @@ export default function SpendingScreen() {
       g={g}
       fromCash={g.txns.some((t) => cashIds.has(t.account_id))}
       decided={!!decisions[g.key]}
+      aliasedFrom={Object.entries(aliases)
+        .filter(([, to]) => to === g.key)
+        .map(([from]) => from)}
+      linkTargets={linkTargets.filter((k) => k !== g.key)}
+      onLink={(canonical_key) => setAlias.mutate({ payee_key: g.key, canonical_key })}
+      onUnlink={(payee_key) => setAlias.mutate({ payee_key, canonical_key: null })}
+      labelOf={labelOf}
       onDeclare={(cadence: Cadence) =>
         setPayee.mutate({
           payee_key: g.key,
@@ -263,11 +296,28 @@ function Section({
    cannot be opened is one you have to go and verify somewhere else. */
 function MerchantRow({
   g,
+  aliasedFrom,
+  linkTargets,
+  onLink,
+  onUnlink,
+  labelOf,
   fromCash,
   decided,
   onDeclare,
 }: {
   g: SpendGroup;
+  /** names folded INTO this merchant by a link you made.
+   *
+   *  Shown on the target rather than on the source, because a linked
+   *  merchant stops having a row of its own — it is inside this one now.
+   *  An earlier version put the undo on the source row, where it could
+   *  never render, which would have made a link permanent in practice. */
+  aliasedFrom: string[];
+  /** kept bills it could be declared the same as */
+  linkTargets: string[];
+  onLink: (canonical: string | null) => void;
+  onUnlink: (payeeKey: string) => void;
+  labelOf: (key: string) => string;
   /** paid from checking, so screen 1 could subtract it without double-counting */
   fromCash: boolean;
   /** already kept or dismissed on the Recurring screen */
@@ -276,6 +326,7 @@ function MerchantRow({
 }) {
   const [open, setOpen] = useState(false);
   const [declaring, setDeclaring] = useState(false);
+  const [linking, setLinking] = useState(false);
   return (
     <div>
       <button
@@ -335,6 +386,69 @@ function MerchantRow({
                 </button>
               )}
             </div>
+          )}
+          {/* "This is the same bill as that one."
+              The automatic matching reads one name inside another, or the
+              same words under a routing prefix. It cannot read "Ellettsville
+              Uti" becoming "Town of Ellettsville", and when that happens a
+              kept bill stops being counted and the number goes UP with
+              nothing saying why. So it can be asserted, and the assertion
+              beats every automatic rule. */}
+          {aliasedFrom.length > 0 && (
+            <p className="px-3 pb-2 pt-1 text-xs" style={{ color: "var(--color-muted)" }}>
+              also counts{" "}
+              {aliasedFrom.map((k, i) => (
+                <span key={k}>
+                  {i > 0 && ", "}
+                  <strong>{labelOf(k)}</strong>{" "}
+                  <button onClick={() => onUnlink(k)} className="underline">
+                    unlink
+                  </button>
+                </span>
+              ))}
+            </p>
+          )}
+          {linking ? (
+            <div className="px-3 pb-2 pt-1 space-y-1">
+              <p className="text-xs" style={{ color: "var(--color-muted)" }}>
+                count this under which bill?
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {linkTargets.length === 0 ? (
+                  <span className="text-xs" style={{ color: "var(--color-faint)" }}>
+                    No kept bills to link to yet.
+                  </span>
+                ) : (
+                  linkTargets.map((k) => (
+                    <button
+                      key={k}
+                      onClick={() => onLink(k)}
+                      className="text-xs px-2 py-1 rounded-md"
+                      style={{ background: "var(--color-chip-bg)", color: "var(--color-text)" }}
+                    >
+                      {labelOf(k)}
+                    </button>
+                  ))
+                )}
+                <button
+                  onClick={() => setLinking(false)}
+                  className="text-xs px-2 py-1 underline"
+                  style={{ color: "var(--color-muted)" }}
+                >
+                  cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="px-3 pb-2 pt-1">
+              <button
+                onClick={() => setLinking(true)}
+                className="text-xs font-semibold"
+                style={{ color: "var(--color-primary)" }}
+              >
+                Same as an existing bill…
+              </button>
+            </p>
           )}
           {!decided && !fromCash && (
             <p className="px-3 pb-2 pt-1 text-xs" style={{ color: "var(--color-faint)" }}>
