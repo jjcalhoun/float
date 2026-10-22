@@ -100,11 +100,32 @@ export interface AliasInput {
   amount: number;
 }
 
+const sameTokens = (a: Set<string>, b: Set<string>) =>
+  a.size > 0 && a.size === b.size && [...a].every((t) => b.has(t));
+
 /** key → the key it should be counted under. Keys with no alias are absent.
  *
- *  The more specific name wins, because "Smithville Tele Bill" tells you what
- *  the bill is and "Certificate of Origin Smithville" tells you how the bank
- *  routed it. */
+ *  The more specific name wins where one contains the other, because
+ *  "Smithville Tele Bill" tells you what the bill is and "Certificate of
+ *  Origin Smithville" tells you how the bank routed it.
+ *
+ *  Two kinds of match, and they need different evidence:
+ *
+ *  IDENTICAL once the plumbing words come off. "Ellettsville Uti" and
+ *  "Certificate of Origin Ellettsville Uti" are the same five characters of
+ *  actual payee with a routing prefix on one of them, and nothing else is
+ *  being claimed. This needs no corroboration from the amounts — and must
+ *  not ask for it, because a utility bill is $101 one month and $81 the
+ *  next, and that is exactly when the names diverging matters most. The
+ *  shorter name wins, as the one with less of the bank in it.
+ *
+ *  A STRICT SUBSET, where one name has distinctive words the other lacks.
+ *  Here the amounts still have to agree, because "Target" inside "Target
+ *  Optical" is the same relationship and they are different shops.
+ *
+ *  Equality used to fall through both tests: isSubset demands the smaller
+ *  set be strictly smaller, so the easiest case — same payee, same words,
+ *  one routing prefix — was the one case this could not see. */
 export function aliasMap(payees: AliasInput[], amountTolerance = 0.05): Map<string, string> {
   const toks = new Map(payees.map((p) => [p.key, distinctive(p.key)]));
   const out = new Map<string, string>();
@@ -112,7 +133,17 @@ export function aliasMap(payees: AliasInput[], amountTolerance = 0.05): Map<stri
   for (const a of payees) {
     for (const b of payees) {
       if (a.key === b.key) continue;
-      if (!isSubset(toks.get(a.key)!, toks.get(b.key)!)) continue;
+      const ta = toks.get(a.key)!;
+      const tb = toks.get(b.key)!;
+
+      if (sameTokens(ta, tb)) {
+        // the longer raw key carries the bank's routing words; it defers
+        if (a.key.length <= b.key.length) continue;
+        out.set(a.key, b.key);
+        break;
+      }
+
+      if (!isSubset(ta, tb)) continue;
       const scale = Math.max(a.amount, b.amount);
       if (scale <= 0 || Math.abs(a.amount - b.amount) / scale > amountTolerance) continue;
       out.set(a.key, b.key);

@@ -147,3 +147,52 @@ describe("one bill posted under two names", () => {
     expect(m.get("acme utility")).toBe("acme utility co of indiana");
   });
 });
+
+describe("the same payee with a routing prefix", () => {
+  /* The real pair, from the account: the Ellettsville water bill arrived as
+     "Ellettsville Uti" in September and "Certificate of Origin Ellettsville
+     Uti" in October. Once the plumbing words come off, both are
+     {ellettsville, uti} — identical, not a subset — so isSubset rejected
+     them, and the amounts ($101.24 against $81.25) would have rejected them
+     too. The easiest case was the one case this could not see. */
+  const A = normalisePayee("Ellettsville Uti");
+  const B = normalisePayee("Certificate of Origin Ellettsville Uti");
+
+  it("merges despite the amounts being nowhere near each other", () => {
+    const m = aliasMap([{ key: A, amount: 101.24 }, { key: B, amount: 81.25 }]);
+    expect(m.get(B)).toBe(A);
+  });
+
+  it("keeps the name with less of the bank in it", () => {
+    const m = aliasMap([{ key: B, amount: 81.25 }, { key: A, amount: 101.24 }]);
+    expect(m.get(B)).toBe(A);
+    expect(m.has(A)).toBe(false);
+  });
+
+  it("does not need the amounts at all when the words match", () => {
+    /* A utility bill is $101 one month and $81 the next, and that is
+       precisely when a name change matters most. Requiring agreement here
+       would make the rule useless exactly where it is needed. */
+    const m = aliasMap([{ key: A, amount: 20 }, { key: B, amount: 900 }]);
+    expect(m.get(B)).toBe(A);
+  });
+
+  it("still will not merge two different shops that share a word", () => {
+    /* "Target" sits inside "Target Optical" as a strict subset, which is a
+       different relationship and still has to clear the amount test. */
+    const t = normalisePayee("Target");
+    const o = normalisePayee("Target Optical");
+    expect(aliasMap([{ key: t, amount: 40 }, { key: o, amount: 310 }]).size).toBe(0);
+  });
+
+  it("leaves the Smithville subset case working as before", () => {
+    const s1 = normalisePayee("Smithville Tele Bill");
+    const s2 = normalisePayee("Certificate of Origin Smithville");
+    expect(aliasMap([{ key: s1, amount: 74.99 }, { key: s2, amount: 74.99 }]).get(s2)).toBe(s1);
+  });
+
+  it("does not map a key to itself or make a cycle", () => {
+    const m = aliasMap([{ key: A, amount: 100 }, { key: B, amount: 100 }]);
+    for (const [from, to] of m) expect(from).not.toBe(to);
+  });
+});
