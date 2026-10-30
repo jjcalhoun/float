@@ -113,3 +113,37 @@ describe("showing both figures", () => {
     expect(spendableBalance(CHECKING).total).toBe(0);
   });
 });
+
+describe("money released before it posts", () => {
+  /* Payday, 30 October: Chase reported $38.49 posted and $2,112 available,
+     because early direct deposit makes the paycheck spendable while the
+     posted figure still shows yesterday. posted − available is then
+     NEGATIVE, and the screen rendered it as "−$2,074 not yet cleared" —
+     which is not merely ugly, it says the opposite of what happened. */
+  const PAYDAY = [{ id: "chk", live_balance: 38.49, live_available_balance: 2112.42 }];
+
+  it("spends the available figure, which is the larger one here", () => {
+    const r = spendableBalance(PAYDAY);
+    expect(r.total).toBeCloseTo(2112.42, 2);
+    expect(r.posted).toBeCloseTo(38.49, 2);
+  });
+
+  it("reports the gap as negative, for the caller to read the sign of", () => {
+    expect(spendableBalance(PAYDAY).pending).toBeCloseTo(-2073.93, 2);
+  });
+
+  it("is not clamped — nothing has been floored at zero", () => {
+    expect(spendableBalance(PAYDAY).clamped).toBe(false);
+  });
+
+  it("nets the two directions across accounts", () => {
+    /* One account holding charges, another with pay released early. The
+       total is what matters and the sign tells you which way it leans. */
+    const r = spendableBalance([
+      { id: "chk", live_balance: 38.49, live_available_balance: 2112.42 },
+      { id: "sav", live_balance: 560, live_available_balance: 538.49 },
+    ]);
+    expect(r.pending).toBeCloseTo(-2073.93 + 21.51, 2);
+    expect(r.total).toBeCloseTo(2650.91, 2);
+  });
+});

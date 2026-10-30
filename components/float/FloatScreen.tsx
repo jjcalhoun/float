@@ -165,11 +165,25 @@ export function FloatScreen() {
               {Math.abs(posted - balance) > 0.005 && (
                 <>
                   {" "}· {fmt0(posted)} posted,{" "}
-                  {/* "at least", because a bank clamps available at zero: once
-                      pending exceeds the balance the subtraction can only see
-                      as much of it as there was money to cover. */}
-                  {clamped ? "at least " : ""}
-                  {fmt0(pending)} not yet cleared
+                  {pending > 0 ? (
+                    <>
+                      {/* "at least", because a bank clamps available at zero:
+                          once pending exceeds the balance the subtraction can
+                          only see as much of it as there was money to
+                          cover. */}
+                      {clamped ? "at least " : ""}
+                      {fmt0(pending)} not yet cleared
+                    </>
+                  ) : (
+                    /* Available EXCEEDS posted: the bank has released money
+                       before it settles, which is what early direct deposit
+                       does — on payday the paycheck is spendable while the
+                       posted figure still shows yesterday. Subtracting one
+                       from the other and calling the result "pending" turned
+                       that into "−$2,074 not yet cleared", which describes
+                       the opposite of what happened. */
+                    <>{fmt0(-pending)} released before it posts</>
+                  )}
                 </>
               )}
             </>
