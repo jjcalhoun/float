@@ -35,13 +35,20 @@ export interface SpendableBalance {
   total: number;
   /** the weakest source any account fell back to */
   source: BalanceSource;
-  /** posted minus available: held by the bank, not yet settled.
+  /** posted minus available. SIGNED, and both signs happen.
    *
-   *  A LOWER BOUND, not a measurement. Banks clamp available at zero, so
-   *  when pending exceeds the posted balance this reports only as much of it
-   *  as the subtraction can see. Presenting it as the exact figure is how
-   *  "$1,268 pending" came to be shown against a $1,268 balance — arithmetic
-   *  reported as a fact from the bank. */
+   *  POSITIVE: money the bank is holding — pending debits, authorisations.
+   *  A LOWER BOUND rather than a measurement, because banks clamp available
+   *  at zero: once pending exceeds the balance, the subtraction can only see
+   *  as much of it as there was money to cover. Reporting it as exact is how
+   *  "$1,268 pending" came to be shown against a $1,268 balance.
+   *
+   *  NEGATIVE: available EXCEEDS posted, because the bank has released money
+   *  before it settles. Early direct deposit does this — on payday the
+   *  paycheck is spendable while the posted balance still shows yesterday.
+   *  The screen rendered that as "−$2,074 not yet cleared", which is not
+   *  merely ugly: it describes the opposite of what happened. Callers have
+   *  to read the sign. */
   pending: number;
   /** the posted total, for showing beside the available one */
   posted: number;
