@@ -24,6 +24,7 @@ import { useTxnWindow } from "@/components/providers";
 import { detectSeries, SUGGEST, type Series, type Txn } from "@/lib/v2/recurring";
 import { normalisePayee } from "@/lib/v2/payee";
 import { manualSeries } from "@/lib/v2/manual";
+import { usePayeeAliases } from "@/hooks/usePayeeAliases";
 import { memoByTxns } from "@/lib/v2/cache";
 import { safeToSpend, type DueItem } from "@/lib/v2/safeToSpend";
 import { applyOverrides } from "@/lib/v2/overrides";
@@ -37,6 +38,7 @@ export function FloatScreen() {
   const { data: accounts = [], isLoading: la } = useAccounts();
   const { data: transactions = [], isLoading: lt } = useTransactions();
   const { data: decisions = {} } = useRecurringPayees();
+  const { data: aliases = {} } = usePayeeAliases();
   const setPayee = useSetRecurringPayee();
   const { data: mappings = [] } = useSimplefinMappings();
   const { data: settings } = useSettings();
@@ -92,8 +94,12 @@ export function FloatScreen() {
   const kept = useMemo(() => {
     /* Shared with the Recurring screen through the transactions array, so
        switching between the two does not re-run detection. */
-    const detected = memoByTxns(transactions, `detect|float|${scopeKey}`, () =>
-      detectSeries(scoped, SUGGEST),
+    /* The alias set is part of the cache key: asserting "same as" changes
+       what detection returns, and a memo that ignored it would serve the
+       answer from before the link. */
+    const aliasKey = Object.entries(aliases).sort().flat().join(",");
+    const detected = memoByTxns(transactions, `detect|float|${scopeKey}|${aliasKey}`, () =>
+      detectSeries(scoped, { ...SUGGEST, aliases }),
     );
     return applyOverrides(
       [
@@ -104,7 +110,7 @@ export function FloatScreen() {
       decisions,
       (s) => normalisePayee(s.payee),
     );
-  }, [scoped, decisions, transactions, scopeKey]);
+  }, [scoped, decisions, transactions, scopeKey, aliases]);
 
   const floor = Number(settings?.v2_floor ?? 0);
   const cardPayment = Number(settings?.v2_card_payment ?? 0);

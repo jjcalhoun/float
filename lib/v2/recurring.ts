@@ -70,6 +70,8 @@ export interface Series {
 }
 
 export interface DetectOptions {
+  /** "same payee as" links you asserted: key → the key it counts under */
+  aliases?: Record<string, string>;
   /** fewest occurrences before a series is believed */
   minHits?: number;
   /** share of gaps a cadence must explain to be believed */
@@ -337,6 +339,8 @@ export function detectSeries(txns: Txn[], opts: DetectOptions = {}): Series[] {
       key,
       amount: median(ts.map((t) => Math.abs(t.amount))),
     })),
+    undefined,
+    opts.aliases,
   );
   for (const [from, to] of aliases) {
     const merged = [...(byPayee.get(to) ?? []), ...(byPayee.get(from) ?? [])];

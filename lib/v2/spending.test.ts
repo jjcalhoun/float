@@ -213,3 +213,38 @@ describe("the empty case", () => {
     expect(r.everyday).toEqual([]);
   });
 });
+
+describe("a merchant you have linked to a bill", () => {
+  /* The real case: the Ellettsville water bill arrived under a name sharing
+     no words with the old one. Without the link it is a second merchant in
+     Everyday; with it, it is the same fixed cost it always was. */
+  const OLD = normalisePayee("Ellettsville Uti");
+  const txns = [
+    t("2026-09-18", -101.24, "Ellettsville Uti"),
+    t("2026-10-21", -81.25, "Town of Ellettsville"),
+  ];
+  const fixedKeys = new Set([OLD]);
+
+  // today has to be after the October charge, or the window excludes it
+  const now = { today: "2026-10-22", days: 90 };
+
+  it("is two merchants without the link", () => {
+    const r = summariseSpending({ ...base, ...now, txns, fixedKeys });
+    expect(r.fixed).toHaveLength(1);
+    expect(r.everyday).toHaveLength(1);
+  });
+
+  it("is one fixed cost with it", () => {
+    const r = summariseSpending({
+      ...base,
+      ...now,
+      txns,
+      fixedKeys,
+      aliases: { [normalisePayee("Town of Ellettsville")]: OLD },
+    });
+    expect(r.fixed).toHaveLength(1);
+    expect(r.everyday).toHaveLength(0);
+    expect(r.fixed[0].total).toBeCloseTo(182.49, 2);
+    expect(r.fixed[0].count).toBe(2);
+  });
+});
