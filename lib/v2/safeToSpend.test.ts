@@ -533,3 +533,67 @@ describe("a bill that was due and has not gone out", () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 });
+
+describe("a small second income is not a payday", () => {
+  /* 30 October, payday, the deposit landed — and the screen read "safe to
+     spend $1,879 until 11/2" with two trivial rows under Coming up. The
+     fortnight of bills it has to cover was all after the 2nd.
+
+     The cause was a $154/month deposit arriving on the 2nd. The horizon was
+     the soonest income of ANY size, so a trickle twenty-seven times smaller
+     than the paycheck ended the pay period, and everything the paycheck has
+     to last through fell outside the window. */
+
+  const PAY: Txn[] = [
+    "2026-08-14", "2026-08-31", "2026-09-15", "2026-09-30", "2026-10-15", "2026-10-30",
+  ].map((d) => t(d, 2110.64, "ADP Totalsource"));
+
+  const TRICKLE: Txn[] = ["2026-07-02", "2026-08-03", "2026-09-02", "2026-10-02"].map((d) =>
+    t(d, 154, "Water Inc"),
+  );
+
+  /* June, so the run ends 10-02 and the next occurrence is 11-02 — ahead of
+     a 10-30 "today" rather than already seen. Starting in July put the last
+     payment in the future and there was nothing due at all, which is a
+     fixture passing for the wrong reason. */
+  const BILLS = monthly("Citizens Bank Mortgage Payment", 583.57, "2026-06-02");
+
+  const base = { balance: 2112, today: "2026-10-30", floor: 0, cardPayment: 0 };
+
+  it("takes the horizon from the paycheck, not from whatever lands first", () => {
+    const kept = detectSeries([...PAY, ...TRICKLE, ...BILLS]);
+    expect(safeToSpend({ ...base, kept }).horizon).toBe("2026-11-13");
+  });
+
+  it("gives the same answer as if the trickle did not exist", () => {
+    const withIt = safeToSpend({ ...base, kept: detectSeries([...PAY, ...TRICKLE, ...BILLS]) });
+    const without = safeToSpend({ ...base, kept: detectSeries([...PAY, ...BILLS]) });
+    expect(withIt.horizon).toBe(without.horizon);
+    expect(withIt.safe).toBe(without.safe);
+  });
+
+  it("stops hiding the fortnight of bills behind it", () => {
+    const kept = detectSeries([...PAY, ...TRICKLE, ...BILLS]);
+    const r = safeToSpend({ ...base, kept });
+    expect(r.due.some((d) => d.payee.startsWith("Citizens"))).toBe(true);
+    expect(r.dueTotal).toBeGreaterThan(0);
+  });
+
+  it("still honours a second income that is a real paycheck", () => {
+    /* Two jobs are usually within a factor of two of each other, and both
+       genuinely end a pay period. The soonest of them wins. */
+    const second = ["2026-09-09", "2026-09-23", "2026-10-07", "2026-10-21"].map((d) =>
+      t(d, 1400, "Second Job Payroll"),
+    );
+    const kept = detectSeries([...PAY, ...second, ...BILLS]);
+    expect(safeToSpend({ ...base, kept }).horizon).toBe("2026-11-04");
+  });
+
+  it("leaves a single income alone however small", () => {
+    /* If the trickle is all there is, it IS the paycheck — the rule is
+       about relative size, and with one income there is nothing to be
+       relative to. */
+    const kept = detectSeries([...TRICKLE, ...BILLS]);
+    expect(safeToSpend({ ...base, kept }).horizon).toBe("2026-11-02");
+  });
+});

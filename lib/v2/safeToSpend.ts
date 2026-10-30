@@ -96,15 +96,41 @@ function alreadySettled(s: Series, date: string, today: string): boolean {
   return date <= today && s.lastSeen >= addDays(date, -GRACE(s));
 }
 
-/** The next payday: the soonest income occurrence not yet in the bank.
+/** What a deposit is worth per month, so incomes of different rhythms can be
+ *  compared at all. */
+const monthlyValue = (s: Series) => (s.amount * 365.25) / 12 / s.periodDays;
+
+/** How small an income has to be before it stops counting as a payday.
+ *
+ *  Half of the largest. Two jobs are usually within a factor of two of each
+ *  other and both genuinely end a pay period; a reimbursement or a small
+ *  monthly transfer is an order of magnitude smaller and ends nothing. */
+const PAYCHECK_SHARE = 0.5;
+
+/** The income series that actually mark the end of a pay period. */
+function paychecks(kept: Series[]): Series[] {
+  const income = kept.filter((s) => s.direction === "in");
+  if (income.length <= 1) return income;
+  const largest = Math.max(...income.map(monthlyValue));
+  return income.filter((s) => monthlyValue(s) >= largest * PAYCHECK_SHARE);
+}
+
+/** The next payday: the soonest PAYCHECK not yet in the bank.
  *
  *  Not simply the soonest occurrence still to come, because on payday itself
  *  that is today, and a horizon of today means nothing is counted as due and
  *  the whole balance — paycheck included — reads as spendable. Once the
- *  deposit has actually landed, the question becomes the next fortnight. */
+ *  deposit has actually landed, the question becomes the next fortnight.
+ *
+ *  And not simply the soonest INCOME, which is what this used to be. A $154
+ *  monthly deposit landing on the 2nd set the horizon exactly as firmly as a
+ *  $2,110 paycheck, so on payday the screen said "safe until 11/2" with
+ *  nothing due before it — hiding a fortnight of bills behind a deposit
+ *  twenty-seven times smaller than the one that has to cover them. The
+ *  horizon means "the money has to last until here", and a trickle does not
+ *  end a pay period. */
 export function nextPayday(kept: Series[], today: string): string | null {
-  const dates = kept
-    .filter((s) => s.direction === "in")
+  const dates = paychecks(kept)
     .map((s) => {
       /* 400 days covers an annual series; the occurrences come back in order,
          so the first one still owing is the first that has not been paid. */
