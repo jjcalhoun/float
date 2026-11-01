@@ -3,7 +3,6 @@ import { createClient } from "@/lib/supabase/server";
 import { BottomNav } from "@/components/nav/BottomNav";
 import { SideNav } from "@/components/nav/SideNav";
 import { HousekeepingRunner } from "@/components/housekeeping/HousekeepingRunner";
-import { MonthPlanPrompt } from "@/components/plan/MonthPlanPrompt";
 
 const demo = process.env.NEXT_PUBLIC_DEMO === "1";
 
@@ -33,7 +32,11 @@ export default async function AppLayout({
         </div>
       )}
       <HousekeepingRunner />
-      <MonthPlanPrompt />
+      {/* The month-plan prompt used to live here, which meant v1's "confirm
+          your November plan" sheet opened itself over the Float screen on the
+          first of the month. It is a v1 behaviour and belongs with v1, so it
+          is mounted on /classic instead — still there if you go back, and not
+          interrupting an app that has no month plan. */}
       {/* Desktop: sidebar; mobile: bottom nav (below) */}
       <SideNav />
       <main className="flex-1 min-w-0">
