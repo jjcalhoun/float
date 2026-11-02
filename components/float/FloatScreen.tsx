@@ -116,6 +116,12 @@ export function FloatScreen() {
   const cardPayment = Number(settings?.v2_card_payment ?? 0);
   const r = safeToSpend({ balance, kept, today, floor, cardPayment });
 
+  /* Obligations held back by a watermark that still covers today, so the
+     list can say why they are not in it. */
+  const coveredAhead = kept.filter(
+    (s) => s.direction === "out" && s.paidThrough && s.paidThrough >= today,
+  );
+
   /* The span the preview actually covers — first to last item rather than
      the nominal seven days, since naming a window wider than the money in
      it is its own small lie. */
@@ -264,6 +270,35 @@ export function FloatScreen() {
               : `between ${shortDate(soonSpan.from)} and ${shortDate(soonSpan.to)}`}
             , after your next paycheck
           </p>
+        )}
+
+        {/* What you have told it is already paid.
+            A watermark suppresses every occurrence up to a date, which is
+            exactly right and completely invisible — the bill simply is not
+            in the list. When I built it I said a bill that silently stops
+            being counted with nothing saying why would be worse than the
+            bug it fixes, and then put the undo only on the Recurring
+            screen. This is the screen where the absence is noticed. */}
+        {coveredAhead.length > 0 && (
+          <div className="text-xs space-y-0.5" style={{ color: "var(--color-muted)" }}>
+            {coveredAhead.map((s) => (
+              <p key={s.key}>
+                {s.payee} — you marked it paid through {shortDate(s.paidThrough!)}{" "}
+                <button
+                  onClick={() =>
+                    setPayee.mutate({
+                      payee_key: normalisePayee(s.payee),
+                      decision: "fixed",
+                      paid_through: null,
+                    })
+                  }
+                  className="underline"
+                >
+                  undo
+                </button>
+              </p>
+            ))}
+          </div>
         )}
       </section>
 
