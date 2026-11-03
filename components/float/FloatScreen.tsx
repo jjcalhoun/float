@@ -116,6 +116,18 @@ export function FloatScreen() {
   const cardPayment = Number(settings?.v2_card_payment ?? 0);
   const r = safeToSpend({ balance, kept, today, floor, cardPayment });
 
+  /* Obligations held back by a watermark that still covers today, so the
+     list can say why they are not in it. */
+  const coveredAhead = kept.filter(
+    (s) => s.direction === "out" && s.paidThrough && s.paidThrough >= today,
+  );
+
+  /* The span the preview actually covers — first to last item rather than
+     the nominal seven days, since naming a window wider than the money in
+     it is its own small lie. */
+  const soonSpan = r.soonAfter.length
+    ? { from: r.soonAfter[0].date, to: r.soonAfter[r.soonAfter.length - 1].date }
+    : null;
   const asOf = balanceAt ? ` as of ${shortDate(balanceAt.slice(0, 10))}` : "";
   const loading = la || lt;
 
@@ -241,11 +253,52 @@ export function FloatScreen() {
             ))
           )}
         </Card>
-        {/* "Safe until the 31st" invites spending it all on the 30th. */}
-        {r.soonAfterTotal > 0 && (
+        {/* "Safe until the 31st" invites spending it all on the 30th, so the
+            week beyond the horizon is previewed here.
+
+            It names its dates now. "In the week after" was read as "next
+            week" — reasonably, since on the 1st the week after this one is
+            the 8th — and that made a preview of the NEXT pay period look
+            like a gap in this one: money due before payday that the list
+            above had somehow missed. The list above is complete to the day
+            before payday; this is what lands once the next paycheck has. */}
+        {r.soonAfterTotal > 0 && soonSpan && (
           <p className="text-xs" style={{ color: "var(--color-muted)" }}>
-            then {fmt0(r.soonAfterTotal)} in the week after
+            then {fmt0(r.soonAfterTotal)}{" "}
+            {soonSpan.from === soonSpan.to
+              ? `on ${shortDate(soonSpan.from)}`
+              : `between ${shortDate(soonSpan.from)} and ${shortDate(soonSpan.to)}`}
+            , after your next paycheck
           </p>
+        )}
+
+        {/* What you have told it is already paid.
+            A watermark suppresses every occurrence up to a date, which is
+            exactly right and completely invisible — the bill simply is not
+            in the list. When I built it I said a bill that silently stops
+            being counted with nothing saying why would be worse than the
+            bug it fixes, and then put the undo only on the Recurring
+            screen. This is the screen where the absence is noticed. */}
+        {coveredAhead.length > 0 && (
+          <div className="text-xs space-y-0.5" style={{ color: "var(--color-muted)" }}>
+            {coveredAhead.map((s) => (
+              <p key={s.key}>
+                {s.payee} — you marked it paid through {shortDate(s.paidThrough!)}{" "}
+                <button
+                  onClick={() =>
+                    setPayee.mutate({
+                      payee_key: normalisePayee(s.payee),
+                      decision: "fixed",
+                      paid_through: null,
+                    })
+                  }
+                  className="underline"
+                >
+                  undo
+                </button>
+              </p>
+            ))}
+          </div>
         )}
       </section>
 
